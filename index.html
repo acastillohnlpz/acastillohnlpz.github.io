@@ -1,0 +1,1202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control de Inventario</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --bg:#E4E1D6;
+    --surface:#FFFFFF;
+    --ink:#14171C;
+    --ink-soft:#5B6068;
+    --accent:#FFC831;
+    --accent-ink:#14171C;
+    --steel:#3E6FA6;
+    --steel-soft:#EAF1F8;
+    --danger:#C6432E;
+    --danger-soft:#FBEAE6;
+    --success:#3F8F5F;
+    --success-soft:#E9F5EE;
+    --line:#C7C3B6;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      repeating-linear-gradient(135deg, rgba(0,0,0,0.015) 0px, rgba(0,0,0,0.015) 2px, transparent 2px, transparent 14px),
+      var(--bg);
+    font-family:'IBM Plex Sans', sans-serif;
+    color:var(--ink);
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+    padding:28px 14px 60px;
+  }
+  .app{ width:100%; max-width:480px; }
+
+  /* ---- Header / ticket stepper ---- */
+  .brand{
+    display:flex; align-items:baseline; gap:10px; margin-bottom:18px;
+  }
+  .brand .mark{
+    font-family:'Barlow Condensed', sans-serif;
+    font-weight:800; font-size:15px; letter-spacing:.14em;
+    background:var(--ink); color:var(--accent);
+    padding:4px 8px; border-radius:4px;
+  }
+  .brand h1{
+    font-family:'Barlow Condensed', sans-serif;
+    font-weight:700; font-size:22px; letter-spacing:.02em; margin:0;
+  }
+
+  .stepper{
+    display:flex; align-items:center; margin-bottom:22px; padding:0 4px;
+  }
+  .stepper .node{
+    width:34px; height:34px; border-radius:50%;
+    border:2px solid var(--line);
+    background:var(--surface);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:15px;
+    color:var(--ink-soft);
+    flex-shrink:0;
+    transition:all .25s ease;
+  }
+  .stepper .node.active{ border-color:var(--ink); background:var(--accent); color:var(--accent-ink); }
+  .stepper .node.done{ border-color:var(--ink); background:var(--ink); color:var(--accent); }
+  .stepper .track{
+    flex:1; height:0; border-top:2px dashed var(--line); margin:0 2px;
+  }
+
+  /* ---- Ticket card ---- */
+  .card{
+    background:var(--surface);
+    border-radius:var(--radius);
+    border:1px solid var(--line);
+    padding:26px 22px 24px;
+    position:relative;
+    box-shadow:0 1px 0 rgba(0,0,0,0.02);
+    animation:rise .35s ease;
+  }
+  @keyframes rise{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);} }
+  .card.as-login{ background:transparent; border:none; padding:0; box-shadow:none; }
+  .card::before, .card::after{
+    content:""; position:absolute; width:16px; height:16px; border-radius:50%;
+    background:var(--bg); top:50%; transform:translateY(-50%);
+  }
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace; font-size:11px; letter-spacing:.12em;
+    color:var(--steel); text-transform:uppercase; font-weight:600; margin:0 0 4px;
+  }
+  h2.step-title{
+    font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:26px;
+    margin:0 0 18px; letter-spacing:.01em;
+  }
+
+  /* ---- Paso 1: tipo de transacción ---- */
+  .tipo-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .tipo-btn{
+    border:1.5px solid var(--line); background:var(--surface);
+    border-radius:10px; padding:18px 12px; text-align:left; cursor:pointer;
+    transition:.15s ease; font-family:'IBM Plex Sans', sans-serif;
+  }
+  .tipo-btn:hover{ border-color:var(--ink); transform:translateY(-1px); }
+  .tipo-btn .icon{ font-size:20px; margin-bottom:8px; display:block; }
+  .tipo-btn .label{ font-weight:600; font-size:15px; display:block; }
+  .tipo-btn .sub{ font-size:11.5px; color:var(--ink-soft); }
+  .tipo-btn.entrada .icon{ color:var(--success); }
+  .tipo-btn.salida .icon{ color:var(--danger); }
+  .tipo-btn.inventario .icon{ color:var(--steel); }
+  .tipo-btn.consulta .icon{ color:var(--ink-soft); }
+
+  /* ---- Paso 2: escaner ---- */
+  .scan-frame{
+    position:relative; width:100%; aspect-ratio:1/1; background:var(--ink);
+    border-radius:12px; overflow:hidden; margin-bottom:14px;
+  }
+  .scan-frame video{ width:100%; height:100%; object-fit:cover; display:block; }
+  .viewfinder{ position:absolute; inset:16%; pointer-events:none; }
+  .viewfinder span{ position:absolute; width:26px; height:26px; border-color:var(--accent); border-style:solid; }
+  .viewfinder .tl{ top:0; left:0; border-width:3px 0 0 3px; border-top-left-radius:6px; }
+  .viewfinder .tr{ top:0; right:0; border-width:3px 3px 0 0; border-top-right-radius:6px; }
+  .viewfinder .bl{ bottom:0; left:0; border-width:0 0 3px 3px; border-bottom-left-radius:6px; }
+  .viewfinder .br{ bottom:0; right:0; border-width:0 3px 3px 0; border-bottom-right-radius:6px; }
+  .laser{
+    position:absolute; left:16%; right:16%; height:2px; background:linear-gradient(90deg, transparent, #FF4433, transparent);
+    box-shadow:0 0 8px 1px rgba(255,68,51,.7);
+    animation:sweep 1.8s ease-in-out infinite;
+  }
+  @keyframes sweep{ 0%,100%{ top:18%; } 50%{ top:80%; } }
+  .scan-status{
+    position:absolute; bottom:10px; left:0; right:0; text-align:center;
+    font-family:'IBM Plex Mono', monospace; font-size:11px; color:#fff; letter-spacing:.06em;
+    opacity:.85;
+  }
+  .divider-or{
+    display:flex; align-items:center; gap:10px; margin:16px 0; color:var(--ink-soft);
+    font-family:'IBM Plex Mono', monospace; font-size:11px; letter-spacing:.1em;
+  }
+  .divider-or::before, .divider-or::after{ content:""; flex:1; border-top:1px solid var(--line); }
+
+  /* ---- inputs comunes ---- */
+  .field{ margin-bottom:14px; }
+  .field label{ display:block; font-size:12px; font-weight:600; color:var(--ink-soft); margin-bottom:6px; letter-spacing:.02em; }
+  .field input, .field select{
+    width:100%; padding:12px 13px; border-radius:9px; border:1.5px solid var(--line);
+    font-family:'IBM Plex Mono', monospace; font-size:15px; background:var(--surface); color:var(--ink);
+  }
+  .field input:focus, .field select:focus{ outline:none; border-color:var(--steel); }
+
+  .btn{
+    width:100%; padding:14px; border-radius:10px; border:none; cursor:pointer;
+    font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:17px; letter-spacing:.03em;
+    transition:.15s ease;
+  }
+  .btn-primary{ background:var(--ink); color:var(--accent); }
+  .btn-primary:hover{ background:#000; }
+  .btn-primary:disabled{ background:var(--line); color:#8a8a86; cursor:not-allowed; }
+  .btn-ghost{ background:transparent; color:var(--ink-soft); border:1.5px solid var(--line); margin-top:8px; }
+  .btn-ghost:hover{ border-color:var(--ink); color:var(--ink); }
+  .btn-row{ display:flex; gap:8px; margin-top:4px; }
+  .btn-row .btn{ flex:1; }
+
+  /* ---- item info chip ---- */
+  .item-chip{
+    display:flex; justify-content:space-between; align-items:center;
+    background:var(--steel-soft); border:1px solid #cfe0ee; border-radius:10px;
+    padding:12px 14px; margin-bottom:16px;
+  }
+  .item-chip .sku{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--steel); letter-spacing:.05em; }
+  .item-chip .nombre{ font-weight:600; font-size:15px; margin-top:2px; }
+  .item-chip .stock{ text-align:right; }
+  .item-chip .stock .n{ font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:24px; }
+  .item-chip .stock .u{ font-size:10.5px; color:var(--ink-soft); letter-spacing:.05em; }
+
+  .banner-new{
+    background:#FFF6DE; border:1px solid #EAD48A; border-radius:10px; padding:10px 12px;
+    font-size:12.5px; color:#7A5B00; margin-bottom:14px;
+  }
+
+  /* ---- resumen (ticket) ---- */
+  .ticket-summary{ text-align:center; padding:6px 0 4px; }
+  .result-icon{
+    width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    margin:0 auto 14px; font-size:24px;
+  }
+  .result-icon.ok{ background:var(--success-soft); color:var(--success); }
+  .result-icon.warn{ background:var(--danger-soft); color:var(--danger); }
+  .result-icon.info{ background:var(--steel-soft); color:var(--steel); }
+  .ticket-summary h3{ font-family:'Barlow Condensed', sans-serif; font-size:22px; margin:0 0 2px; }
+  .ticket-summary .meta{ font-size:12.5px; color:var(--ink-soft); margin-bottom:18px; font-family:'IBM Plex Mono', monospace; }
+
+  .stat-row{ display:flex; border-top:1px dashed var(--line); border-bottom:1px dashed var(--line); padding:14px 0; margin-bottom:16px; }
+  .stat{ flex:1; text-align:center; }
+  .stat .k{ font-size:10.5px; letter-spacing:.08em; color:var(--ink-soft); text-transform:uppercase; margin-bottom:4px; }
+  .stat .v{ font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:22px; }
+  .stat.delta-pos .v{ color:var(--success); }
+  .stat.delta-neg .v{ color:var(--danger); }
+
+  .history{ text-align:left; margin-top:4px; }
+  .history .h-title{ font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft); margin-bottom:8px; }
+  .h-item{ display:flex; justify-content:space-between; padding:8px 0; border-top:1px solid #EEECE4; font-size:13px; }
+  .h-item:first-child{ border-top:none; }
+  .h-item .tag{ font-family:'IBM Plex Mono', monospace; font-size:10.5px; padding:2px 6px; border-radius:4px; margin-right:6px; }
+  .tag.entrada{ background:var(--success-soft); color:var(--success); }
+  .tag.salida{ background:var(--danger-soft); color:var(--danger); }
+  .tag.inventario{ background:var(--steel-soft); color:var(--steel); }
+  .h-item .h-fecha{ color:var(--ink-soft); font-family:'IBM Plex Mono', monospace; font-size:10.5px; }
+
+  .error-msg{ color:var(--danger); font-size:12.5px; margin:-6px 0 12px; }
+  .helper{ font-size:12px; color:var(--ink-soft); margin-top:-4px; margin-bottom:14px; }
+
+  /* ---- crear código ---- */
+  .btn-crear{
+    width:100%; margin-top:10px; padding:14px 12px; border-radius:10px;
+    border:1.5px dashed var(--line); background:transparent; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    font-family:'IBM Plex Sans', sans-serif; font-weight:600; font-size:14px; color:var(--ink-soft);
+    transition:.15s ease;
+  }
+  .btn-crear:hover{ border-color:var(--steel); color:var(--steel); }
+  .btn-crear .plus{ font-family:'Barlow Condensed', sans-serif; font-weight:800; font-size:17px; }
+
+  .sku-row{ display:flex; gap:8px; }
+  .sku-row input{ flex:1; }
+  .btn-mini{
+    padding:0 14px; border-radius:9px; border:1.5px solid var(--line); background:var(--surface);
+    font-family:'IBM Plex Mono', monospace; font-size:11px; font-weight:600; color:var(--ink-soft); cursor:pointer;
+    white-space:nowrap;
+  }
+  .btn-mini:hover{ border-color:var(--steel); color:var(--steel); }
+
+  .qr-box{
+    background:var(--surface); border:1.5px dashed var(--line); border-radius:12px;
+    padding:22px; display:flex; flex-direction:column; align-items:center; margin-bottom:18px;
+  }
+  .qr-box #qrCanvasHolder{ padding:10px; background:#fff; border-radius:8px; }
+  .qr-box .qr-sku{ font-family:'IBM Plex Mono', monospace; font-weight:600; font-size:14px; margin-top:12px; letter-spacing:.04em; }
+  .qr-box .qr-nombre{ font-size:13px; color:var(--ink-soft); margin-top:2px; text-align:center; }
+
+  /* ---- login / logon ---- */
+  .login-wrap{ display:flex; justify-content:center; padding-top:6vh; }
+  .badge-card{
+    width:100%; max-width:340px; background:var(--surface); border:1px solid var(--line);
+    border-radius:16px; padding:30px 26px 26px; position:relative; text-align:center;
+    animation:rise .35s ease;
+  }
+  .badge-hole{
+    width:34px; height:10px; border-radius:6px; background:var(--bg); border:1px solid var(--line);
+    margin:0 auto 18px;
+  }
+  .badge-lock{
+    width:46px; height:46px; border-radius:50%; background:var(--ink); color:var(--accent);
+    display:flex; align-items:center; justify-content:center; margin:0 auto 14px; font-size:20px;
+  }
+  .badge-card h2{ font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:23px; margin:0 0 4px; }
+  .badge-card .sub{ font-size:12.5px; color:var(--ink-soft); margin-bottom:20px; }
+  .badge-card .field{ text-align:left; }
+  .link-toggle{
+    background:none; border:none; color:var(--steel); font-size:12.5px; font-weight:600;
+    cursor:pointer; margin-top:14px; padding:4px; font-family:'IBM Plex Sans', sans-serif;
+  }
+  .link-toggle:hover{ text-decoration:underline; }
+
+  .operador-pill{
+    display:flex; align-items:center; gap:8px; margin-left:auto;
+    background:var(--surface); border:1px solid var(--line); border-radius:999px;
+    padding:5px 6px 5px 12px; font-size:12px;
+  }
+  .operador-pill .op-name{ font-weight:600; }
+  .operador-pill button{
+    border:none; background:var(--bg); border-radius:999px; width:22px; height:22px;
+    cursor:pointer; font-size:12px; color:var(--ink-soft); line-height:1;
+  }
+  .operador-pill button:hover{ color:var(--danger); }
+  .brand{ align-items:center; }
+  .gear-btn{
+    border:1px solid var(--line); background:var(--surface); border-radius:999px;
+    width:30px; height:30px; cursor:pointer; font-size:14px; color:var(--ink-soft); margin-left:8px;
+    flex-shrink:0; align-items:center; justify-content:center;
+  }
+  .gear-btn:hover{ border-color:var(--steel); color:var(--steel); }
+
+  /* ---- config / google sheets ---- */
+  .status-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .status-dot.off{ background:var(--line); }
+  .status-dot.on{ background:var(--success); }
+  .status-line{ display:flex; align-items:center; font-size:12.5px; color:var(--ink-soft); margin-bottom:16px; }
+  .config-section{ border-top:1px dashed var(--line); padding-top:16px; margin-top:16px; }
+  .config-section:first-of-type{ border-top:none; padding-top:0; margin-top:0; }
+  .config-section h4{ font-family:'Barlow Condensed', sans-serif; font-size:16px; margin:0 0 10px; letter-spacing:.02em; }
+  .config-note{ font-size:11.5px; color:var(--ink-soft); line-height:1.5; margin-top:-2px; margin-bottom:12px; }
+  .sheet-link{ font-size:12.5px; color:var(--steel); font-weight:600; text-decoration:none; }
+  .sheet-link:hover{ text-decoration:underline; }
+  .sync-toast{ font-size:11.5px; color:var(--success); margin-top:8px; display:none; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="brand"><span class="mark">SKU•SCAN</span><h1>Control de Inventario</h1><div id="operadorPill"></div><button id="btnGear" class="gear-btn" title="Configuración" style="display:none;">⚙</button></div>
+  <div class="stepper" id="stepper"></div>
+  <div class="card" id="stepContainer"></div>
+</div>
+
+<script>
+const STEP_LABELS = ["Tipo","Escanear","Datos","Resumen"];
+const CODIGO_REGISTRO = "ALMACEN-2024"; // código que el supervisor entrega para autorizar nuevos operadores
+let state = {
+  screen: 'login',       // login | registro | main | crear
+  auth: null,            // {usuario, nombre}
+  step: 1,
+  tipo: null,          // entrada | salida | inventario | consulta
+  sku: null,
+  item: null,           // {sku, nombre, stock, historial:[]}
+  isNew: false,
+  lastResult: null,
+  crearItem: null
+};
+let stream = null, scanning = false, rafId = null;
+
+function renderStepper(){
+  const el = document.getElementById('stepper');
+  const pill = document.getElementById('operadorPill');
+  const gear = document.getElementById('btnGear');
+  if(state.screen === 'login' || state.screen === 'registro'){
+    el.style.display = 'none';
+    pill.innerHTML = '';
+    gear.style.display = 'none';
+    return;
+  }
+  pill.innerHTML = state.auth ? `<div class="operador-pill"><span class="op-name">${state.auth.nombre}</span><button id="btnLogout" title="Cerrar sesión">⏻</button></div>` : '';
+  gear.style.display = state.auth ? 'flex' : 'none';
+  if(state.screen === 'crear' || state.screen === 'config'){ el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  el.innerHTML = '';
+  for(let i=1;i<=4;i++){
+    const node = document.createElement('div');
+    node.className = 'node' + (i < state.step ? ' done' : i===state.step ? ' active' : '');
+    node.textContent = i < state.step ? '✓' : i;
+    el.appendChild(node);
+    if(i<4){
+      const track = document.createElement('div');
+      track.className = 'track';
+      el.appendChild(track);
+    }
+  }
+}
+
+function goTo(step){ state.step = step; render(); }
+
+function resetFlow(){
+  stopCamera();
+  const auth = state.auth;
+  state = { screen:'main', auth, step:1, tipo:null, sku:null, item:null, isNew:false, lastResult:null, crearItem:null };
+  render();
+}
+
+async function loadItem(sku){
+  try{
+    const res = await window.storage.get('item:'+sku, true);
+    return res ? JSON.parse(res.value) : null;
+  }catch(e){ return null; }
+}
+async function saveItem(item){
+  try{ await window.storage.set('item:'+item.sku, JSON.stringify(item), true); }catch(e){}
+}
+
+function fmtDate(ts){
+  const d = new Date(ts);
+  return d.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+}
+
+function stopCamera(){
+  scanning = false;
+  if(rafId) cancelAnimationFrame(rafId);
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; }
+}
+
+/* ---------------- RENDER ---------------- */
+function render(){
+  renderStepper();
+  const c = document.getElementById('stepContainer');
+  if(state.screen === 'login'){
+    c.classList.add('as-login'); c.innerHTML = renderLogin(); bindEvents(); return;
+  }
+  if(state.screen === 'registro'){
+    c.classList.add('as-login'); c.innerHTML = renderRegistro(); bindEvents(); return;
+  }
+  c.classList.remove('as-login');
+  if(state.screen === 'crear'){
+    if(state.crearItem) { c.innerHTML = renderCrearResult(); bindEvents(); drawQR(); }
+    else { c.innerHTML = renderCrearForm(); bindEvents(); }
+    return;
+  }
+  if(state.screen === 'config'){
+    c.innerHTML = renderConfig(); bindEvents();
+    return;
+  }
+  if(state.step===1) c.innerHTML = renderStep1();
+  else if(state.step===2) { c.innerHTML = renderStep2(); initScanner(); }
+  else if(state.step===3) c.innerHTML = renderStep3();
+  else if(state.step===4) c.innerHTML = renderStep4();
+  bindEvents();
+}
+
+function renderLogin(){
+  return `
+    <div class="login-wrap">
+      <div class="badge-card">
+        <div class="badge-hole"></div>
+        <div class="badge-lock">🔒</div>
+        <h2>Acceso de operador</h2>
+        <div class="sub">Identifícate para registrar movimientos</div>
+        <div class="field">
+          <label for="lUsuario">Usuario</label>
+          <input id="lUsuario" type="text" placeholder="Ej. jperez" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="lPin">PIN</label>
+          <input id="lPin" type="password" inputmode="numeric" placeholder="••••" autocomplete="off">
+        </div>
+        <div id="loginError" class="error-msg" style="display:none;"></div>
+        <button class="btn btn-primary" id="btnLogin">Ingresar</button>
+        <button class="link-toggle" id="btnGoRegistro">¿Nuevo operador? Regístrate aquí</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderRegistro(){
+  return `
+    <div class="login-wrap">
+      <div class="badge-card">
+        <div class="badge-hole"></div>
+        <div class="badge-lock">🔒</div>
+        <h2>Registrar operador</h2>
+        <div class="sub">Crea tu acceso al sistema</div>
+        <div class="field">
+          <label for="rNombre">Nombre completo</label>
+          <input id="rNombre" type="text" placeholder="Ej. Juana Pérez" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="rUsuario">Usuario</label>
+          <input id="rUsuario" type="text" placeholder="Ej. jperez" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="rPin">PIN (4 dígitos)</label>
+          <input id="rPin" type="password" inputmode="numeric" maxlength="6" placeholder="••••" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="rCodigo">Código de autorización</label>
+          <input id="rCodigo" type="text" placeholder="Proporcionado por tu supervisor" autocomplete="off">
+        </div>
+        <div id="registroError" class="error-msg" style="display:none;"></div>
+        <button class="btn btn-primary" id="btnRegistro">Crear acceso</button>
+        <button class="link-toggle" id="btnGoLogin">Ya tengo cuenta — Ingresar</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderStep1(){
+  const tipos = [
+    {id:'entrada', icon:'▲', label:'Entrada', sub:'Ingreso de mercancía'},
+    {id:'salida', icon:'▼', label:'Salida', sub:'Retiro de mercancía'},
+    {id:'inventario', icon:'◎', label:'Inventario', sub:'Conteo físico'},
+    {id:'consulta', icon:'?', label:'Consulta', sub:'Ver existencias'},
+  ];
+  return `
+    <p class="eyebrow">Paso 1 de 4</p>
+    <h2 class="step-title">¿Qué operación vas a registrar?</h2>
+    <div class="tipo-grid">
+      ${tipos.map(t=>`
+        <button class="tipo-btn ${t.id}" data-tipo="${t.id}">
+          <span class="icon">${t.icon}</span>
+          <span class="label">${t.label}</span>
+          <span class="sub">${t.sub}</span>
+        </button>`).join('')}
+    </div>
+    <button class="btn-crear" id="btnGoCrear"><span class="plus">+</span> Crear código para un artículo nuevo</button>
+  `;
+}
+
+function renderCrearForm(){
+  return `
+    <p class="eyebrow">Alta de artículo</p>
+    <h2 class="step-title">Crear código QR</h2>
+    <div class="field">
+      <label for="cNombre">Nombre del artículo</label>
+      <input id="cNombre" type="text" placeholder="Ej. Filtro de aceite 3/4in" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="cSku">Código (SKU)</label>
+      <div class="sku-row">
+        <input id="cSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
+        <button class="btn-mini" id="btnAutoSku" type="button">Autogenerar</button>
+      </div>
+      <div class="helper">Déjalo vacío y presiona "Autogenerar" si no tienes uno.</div>
+    </div>
+    <div class="field">
+      <label for="cStock">Stock inicial</label>
+      <input id="cStock" type="number" min="0" step="1" value="0" inputmode="numeric">
+    </div>
+    <div id="crearError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnCrearConfirm">Generar código QR</button>
+    <button class="btn btn-ghost" id="btnCrearCancel">← Volver</button>
+  `;
+}
+
+function renderCrearResult(){
+  const item = state.crearItem;
+  return `
+    <p class="eyebrow">Código generado</p>
+    <h2 class="step-title">Listo para imprimir</h2>
+    <div class="qr-box">
+      <div id="qrCanvasHolder"></div>
+      <div class="qr-sku">${item.sku}</div>
+      <div class="qr-nombre">${item.nombre}</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="btnDescargarQR">Descargar PNG</button>
+      <button class="btn btn-ghost" id="btnImprimirQR">Imprimir</button>
+    </div>
+    <button class="btn btn-primary" style="margin-top:8px;" id="btnCrearOtro">Crear otro código</button>
+    <button class="btn btn-ghost" id="btnCrearFin">Volver al inicio</button>
+  `;
+}
+
+function renderStep2(){
+  const tipoLabel = {entrada:'Entrada', salida:'Salida', inventario:'Inventario', consulta:'Consulta'}[state.tipo];
+  return `
+    <p class="eyebrow">Paso 2 de 4 · ${tipoLabel}</p>
+    <h2 class="step-title">Escanea el código QR del artículo</h2>
+    <div class="scan-frame">
+      <video id="video" playsinline muted></video>
+      <div class="viewfinder"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
+      <div class="laser" id="laser" style="display:none;"></div>
+      <div class="scan-status" id="scanStatus">Iniciando cámara…</div>
+    </div>
+    <div class="divider-or">o ingresa el código manualmente</div>
+    <div class="field">
+      <label for="manualSku">Código del artículo (SKU)</label>
+      <input id="manualSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
+    </div>
+    <div id="manualError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnManualContinue">Continuar</button>
+    <button class="btn btn-ghost" id="btnBackTo1">← Cambiar tipo de operación</button>
+  `;
+}
+
+function renderStep3(){
+  const tipo = state.tipo;
+  const item = state.item;
+  const tipoLabel = {entrada:'Entrada', salida:'Salida', inventario:'Inventario'}[tipo];
+  let fields = '';
+  let newNameField = '';
+  if(state.isNew){
+    newNameField = `
+      <div class="field">
+        <label for="fNombre">Nombre del artículo (nuevo código)</label>
+        <input id="fNombre" type="text" placeholder="Ej. Filtro de aceite 3/4in" autocomplete="off">
+      </div>`;
+  }
+  if(tipo==='entrada'){
+    fields = `
+      <div class="field">
+        <label for="fCantidad">Cantidad a ingresar</label>
+        <input id="fCantidad" type="number" min="1" step="1" placeholder="0" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label for="fNota">Nota / proveedor (opcional)</label>
+        <input id="fNota" type="text" placeholder="Ej. Compra a Distribuidora Sur" autocomplete="off">
+      </div>`;
+  } else if(tipo==='salida'){
+    fields = `
+      <div class="field">
+        <label for="fCantidad">Cantidad a retirar</label>
+        <input id="fCantidad" type="number" min="1" step="1" placeholder="0" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label for="fNota">Nota / destino (opcional)</label>
+        <input id="fNota" type="text" placeholder="Ej. Orden de trabajo #118" autocomplete="off">
+      </div>`;
+  } else if(tipo==='inventario'){
+    fields = `
+      <div class="field">
+        <label for="fCantidad">Conteo físico (cantidad real contada)</label>
+        <input id="fCantidad" type="number" min="0" step="1" placeholder="0" inputmode="numeric">
+      </div>`;
+  }
+  const chip = state.isNew ? `<div class="banner-new">Código nuevo — no existe en el inventario. Se creará al confirmar.</div>` : `
+    <div class="item-chip">
+      <div><div class="sku">${item.sku}</div><div class="nombre">${item.nombre}</div></div>
+      <div class="stock"><div class="n">${item.stock}</div><div class="u">EN STOCK</div></div>
+    </div>`;
+
+  return `
+    <p class="eyebrow">Paso 3 de 4 · ${tipoLabel}</p>
+    <h2 class="step-title">Ingresa los datos</h2>
+    ${chip}
+    ${newNameField}
+    ${fields}
+    <div id="step3Error" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnConfirm">Confirmar operación</button>
+    <button class="btn btn-ghost" id="btnBackTo2">← Volver a escanear</button>
+  `;
+}
+
+function renderStep4(){
+  const r = state.lastResult;
+  if(!r) return `<p>No hay datos.</p>`;
+  if(r.tipo==='consulta'){
+    const item = r.item;
+    const hist = (item.historial||[]).slice(-5).reverse();
+    return `
+      <p class="eyebrow">Paso 4 de 4 · Consulta</p>
+      <div class="ticket-summary">
+        <div class="result-icon info">◎</div>
+        <h3>${item.nombre}</h3>
+        <div class="meta">${item.sku}</div>
+      </div>
+      <div class="stat-row">
+        <div class="stat"><div class="k">Stock actual</div><div class="v">${item.stock}</div></div>
+        <div class="stat"><div class="k">Movimientos</div><div class="v">${(item.historial||[]).length}</div></div>
+      </div>
+      <div class="history">
+        <div class="h-title">Últimos movimientos</div>
+        ${hist.length ? hist.map(h=>`
+          <div class="h-item">
+            <span><span class="tag ${h.tipo}">${h.tipo}</span>${h.detalle||''}</span>
+            <span class="h-fecha">${fmtDate(h.fecha)}</span>
+          </div>`).join('') : '<div class="h-item">Sin movimientos registrados.</div>'}
+      </div>
+      <button class="btn btn-primary" style="margin-top:18px;" id="btnRestart">Nueva operación</button>
+    `;
+  }
+
+  const isWarn = r.tipo==='salida' && r.nuevo < 0;
+  const iconClass = isWarn ? 'warn' : (r.tipo==='inventario' ? 'info' : 'ok');
+  const icon = isWarn ? '!' : (r.tipo==='entrada' ? '▲' : r.tipo==='salida' ? '▼' : '◎');
+  const tipoLabel = {entrada:'Entrada registrada', salida:'Salida registrada', inventario:'Inventario ajustado'}[r.tipo];
+  const deltaClass = r.delta > 0 ? 'delta-pos' : r.delta < 0 ? 'delta-neg' : '';
+
+  return `
+    <p class="eyebrow">Paso 4 de 4 · Resumen</p>
+    <div class="ticket-summary">
+      <div class="result-icon ${iconClass}">${icon}</div>
+      <h3>${tipoLabel}</h3>
+      <div class="meta">${r.sku} · ${fmtDate(r.fecha)}</div>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><div class="k">Antes</div><div class="v">${r.anterior}</div></div>
+      <div class="stat ${deltaClass}"><div class="k">Cambio</div><div class="v">${r.delta>0?'+':''}${r.delta}</div></div>
+      <div class="stat"><div class="k">Ahora</div><div class="v">${r.nuevo}</div></div>
+    </div>
+    ${isWarn ? `<div class="banner-new" style="background:var(--danger-soft); color:var(--danger); border-color:#eec3ba;">El stock quedó en negativo. Verifica el conteo físico.</div>` : ''}
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="btnConsultThis">Ver ficha completa</button>
+      <button class="btn btn-primary" id="btnRestart">Nueva operación</button>
+    </div>
+  `;
+}
+
+/* ---------------- EVENTS ---------------- */
+function bindEvents(){
+  document.querySelectorAll('.tipo-btn').forEach(b=>{
+    b.onclick = ()=>{ state.tipo = b.dataset.tipo; goTo(2); };
+  });
+  const backTo1 = document.getElementById('btnBackTo1');
+  if(backTo1) backTo1.onclick = ()=>{ stopCamera(); goTo(1); };
+
+  const backTo2 = document.getElementById('btnBackTo2');
+  if(backTo2) backTo2.onclick = ()=>{ goTo(2); };
+
+  const manualBtn = document.getElementById('btnManualContinue');
+  if(manualBtn) manualBtn.onclick = async ()=>{
+    const val = document.getElementById('manualSku').value.trim();
+    const err = document.getElementById('manualError');
+    if(!val){ err.textContent = 'Ingresa un código de artículo.'; err.style.display='block'; return; }
+    await handleScanned(val);
+  };
+
+  const confirmBtn = document.getElementById('btnConfirm');
+  if(confirmBtn) confirmBtn.onclick = handleConfirmStep3;
+
+  const restartBtn = document.getElementById('btnRestart');
+  if(restartBtn) restartBtn.onclick = resetFlow;
+
+  const consultThis = document.getElementById('btnConsultThis');
+  if(consultThis) consultThis.onclick = async ()=>{
+    const item = await loadItem(state.sku);
+    state.lastResult = { tipo:'consulta', item };
+    render();
+  };
+
+  const goCrear = document.getElementById('btnGoCrear');
+  if(goCrear) goCrear.onclick = ()=>{ state.screen='crear'; state.crearItem=null; render(); };
+
+  const autoSku = document.getElementById('btnAutoSku');
+  if(autoSku) autoSku.onclick = ()=>{ document.getElementById('cSku').value = genSku(); };
+
+  const crearCancel = document.getElementById('btnCrearCancel');
+  if(crearCancel) crearCancel.onclick = ()=>{ state.screen='main'; render(); };
+
+  const crearConfirm = document.getElementById('btnCrearConfirm');
+  if(crearConfirm) crearConfirm.onclick = handleCrearConfirm;
+
+  const crearOtro = document.getElementById('btnCrearOtro');
+  if(crearOtro) crearOtro.onclick = ()=>{ state.crearItem=null; render(); };
+
+  const crearFin = document.getElementById('btnCrearFin');
+  if(crearFin) crearFin.onclick = resetFlow;
+
+  const btnLogout = document.getElementById('btnLogout');
+  if(btnLogout) btnLogout.onclick = ()=>{
+    stopCamera();
+    state = { screen:'login', auth:null, step:1, tipo:null, sku:null, item:null, isNew:false, lastResult:null, crearItem:null };
+    render();
+  };
+
+  const goRegistro = document.getElementById('btnGoRegistro');
+  if(goRegistro) goRegistro.onclick = ()=>{ state.screen='registro'; render(); };
+
+  const goLogin = document.getElementById('btnGoLogin');
+  if(goLogin) goLogin.onclick = ()=>{ state.screen='login'; render(); };
+
+  const btnLogin = document.getElementById('btnLogin');
+  if(btnLogin) btnLogin.onclick = handleLogin;
+
+  const btnRegistro = document.getElementById('btnRegistro');
+  if(btnRegistro) btnRegistro.onclick = handleRegistro;
+
+  const descargarQR = document.getElementById('btnDescargarQR');
+  if(descargarQR) descargarQR.onclick = ()=>{
+    const canvas = document.querySelector('#qrCanvasHolder canvas');
+    if(!canvas) return;
+    const link = document.createElement('a');
+    link.download = state.crearItem.sku + '.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+
+  const imprimirQR = document.getElementById('btnImprimirQR');
+  if(imprimirQR) imprimirQR.onclick = ()=>{
+    const canvas = document.querySelector('#qrCanvasHolder canvas');
+    if(!canvas) return;
+    const w = window.open('', '_blank');
+    w.document.write(`<html><head><title>${state.crearItem.sku}</title></head><body style="text-align:center; font-family:sans-serif; margin-top:40px;">
+      <img src="${canvas.toDataURL('image/png')}" style="width:260px;height:260px;"/>
+      <p style="font-size:16px;font-weight:600;">${state.crearItem.sku}</p>
+      <p style="font-size:13px;color:#555;">${state.crearItem.nombre}</p>
+      </body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
+
+  const btnGear = document.getElementById('btnGear');
+  if(btnGear) btnGear.onclick = ()=>{ state.screen='config'; render(); };
+
+  const btnConfigVolver = document.getElementById('btnConfigVolver');
+  if(btnConfigVolver) btnConfigVolver.onclick = ()=>{ state.screen='main'; render(); };
+
+  const btnGuardarClientId = document.getElementById('btnGuardarClientId');
+  if(btnGuardarClientId) btnGuardarClientId.onclick = async ()=>{
+    const val = document.getElementById('cfgClientId').value.trim();
+    if(!val) return;
+    googleCfg.clientId = val;
+    await saveGoogleConfig();
+    render();
+  };
+
+  const btnConectarGoogle = document.getElementById('btnConectarGoogle');
+  if(btnConectarGoogle) btnConectarGoogle.onclick = async ()=>{
+    btnConectarGoogle.disabled = true; btnConectarGoogle.textContent = 'Conectando…';
+    try{ await conectarGoogle(); render(); }
+    catch(e){ alert('No se pudo conectar: ' + e.message); render(); }
+  };
+
+  const btnCrearHoja = document.getElementById('btnCrearHoja');
+  if(btnCrearHoja) btnCrearHoja.onclick = async ()=>{
+    btnCrearHoja.disabled = true; btnCrearHoja.textContent = 'Creando…';
+    try{
+      const id = await crearHojaCalculo();
+      googleCfg.spreadsheetId = id;
+      await saveGoogleConfig();
+      render();
+    }catch(e){ alert('No se pudo crear la hoja: ' + e.message); render(); }
+  };
+
+  const btnUsarHojaExistente = document.getElementById('btnUsarHojaExistente');
+  if(btnUsarHojaExistente) btnUsarHojaExistente.onclick = ()=>{
+    const wrap = document.getElementById('hojaExistenteWrap');
+    wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
+  };
+
+  const btnGuardarHojaExistente = document.getElementById('btnGuardarHojaExistente');
+  if(btnGuardarHojaExistente) btnGuardarHojaExistente.onclick = async ()=>{
+    const val = document.getElementById('cfgSpreadsheetId').value.trim();
+    if(!val) return;
+    googleCfg.spreadsheetId = val;
+    await saveGoogleConfig();
+    render();
+  };
+
+  const btnSyncTodo = document.getElementById('btnSyncTodo');
+  if(btnSyncTodo) btnSyncTodo.onclick = sincronizarTodoElInventario;
+}
+
+function genSku(){
+  const rnd = Math.floor(1000 + Math.random()*9000);
+  return 'ART-' + rnd;
+}
+
+function drawQR(){
+  const holder = document.getElementById('qrCanvasHolder');
+  if(!holder || !state.crearItem) return;
+  holder.innerHTML = '';
+  if(window.QRCode){
+    new QRCode(holder, { text: state.crearItem.sku, width: 200, height: 200, colorDark:'#14171C', colorLight:'#ffffff' });
+  } else {
+    holder.textContent = state.crearItem.sku;
+  }
+}
+
+async function handleCrearConfirm(){
+  const err = document.getElementById('crearError');
+  err.style.display = 'none';
+  const nombre = document.getElementById('cNombre').value.trim();
+  let sku = document.getElementById('cSku').value.trim();
+  const stockRaw = document.getElementById('cStock').value;
+  const stock = parseInt(stockRaw, 10);
+
+  if(!nombre){ err.textContent = 'Ingresa el nombre del artículo.'; err.style.display='block'; return; }
+  if(isNaN(stock) || stock < 0){ err.textContent = 'Ingresa un stock inicial válido.'; err.style.display='block'; return; }
+
+  if(!sku){
+    sku = genSku();
+    let existing = await loadItem(sku);
+    let tries = 0;
+    while(existing && tries < 8){ sku = genSku(); existing = await loadItem(sku); tries++; }
+  } else {
+    const existing = await loadItem(sku);
+    if(existing){ err.textContent = 'Ese código ya existe. Usa "Autogenerar" o elige otro.'; err.style.display='block'; return; }
+  }
+
+  const item = { sku, nombre, stock, historial:[{ tipo:'inventario', cantidad:stock, anterior:0, nuevo:stock, detalle:'alta de artículo', fecha: Date.now() }] };
+  await saveItem(item);
+  upsertInventoryRow(item);
+  syncMovimiento({ tipo:'alta', sku, nombre, cantidad:stock, anterior:0, nuevo:stock, fecha: Date.now() });
+  state.crearItem = item;
+  render();
+}
+
+async function handleScanned(sku){
+  stopCamera();
+  state.sku = sku;
+  const item = await loadItem(sku);
+  if(item){ state.item = item; state.isNew = false; }
+  else { state.item = { sku, nombre:'', stock:0, historial:[] }; state.isNew = true; }
+
+  if(state.tipo === 'consulta'){
+    state.lastResult = { tipo:'consulta', item: state.item };
+    goTo(4);
+  } else {
+    goTo(3);
+  }
+}
+
+async function handleConfirmStep3(){
+  const err = document.getElementById('step3Error');
+  err.style.display = 'none';
+  const tipo = state.tipo;
+  let nombre = state.item.nombre;
+  if(state.isNew){
+    nombre = document.getElementById('fNombre').value.trim();
+    if(!nombre){ err.textContent = 'Ingresa un nombre para el nuevo artículo.'; err.style.display='block'; return; }
+  }
+  const cantidadRaw = document.getElementById('fCantidad').value;
+  const cantidad = parseInt(cantidadRaw, 10);
+  if(isNaN(cantidad) || cantidad < 0){ err.textContent = 'Ingresa una cantidad válida.'; err.style.display='block'; return; }
+  const notaField = document.getElementById('fNota');
+  const nota = notaField ? notaField.value.trim() : '';
+
+  const anterior = state.item.stock;
+  let nuevo, delta, detalle;
+  if(tipo==='entrada'){
+    delta = cantidad; nuevo = anterior + cantidad;
+    detalle = nota ? `+${cantidad} · ${nota}` : `+${cantidad}`;
+  } else if(tipo==='salida'){
+    delta = -cantidad; nuevo = anterior - cantidad;
+    detalle = nota ? `-${cantidad} · ${nota}` : `-${cantidad}`;
+  } else if(tipo==='inventario'){
+    delta = cantidad - anterior; nuevo = cantidad;
+    detalle = `conteo: ${cantidad}`;
+  }
+
+  const fecha = Date.now();
+  const opTag = state.auth ? state.auth.nombre : '';
+  const detalleFinal = opTag ? `${detalle} · reg. ${opTag}` : detalle;
+  const item = { sku: state.item.sku, nombre, stock: nuevo, historial: state.item.historial || [] };
+  item.historial.push({ tipo, cantidad, anterior, nuevo, detalle: detalleFinal, fecha });
+  if(item.historial.length > 20) item.historial = item.historial.slice(-20);
+  await saveItem(item);
+  upsertInventoryRow(item);
+  syncMovimiento({ tipo, sku:item.sku, nombre:item.nombre, cantidad, anterior, nuevo, fecha });
+
+  state.item = item;
+  state.lastResult = { tipo, sku:item.sku, anterior, nuevo, delta, fecha };
+  goTo(4);
+}
+
+/* ---------------- SCANNER ---------------- */
+async function initScanner(){
+  const video = document.getElementById('video');
+  const statusEl = document.getElementById('scanStatus');
+  const laser = document.getElementById('laser');
+  if(!video) return;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = stream;
+    await video.play();
+    statusEl.textContent = 'Buscando código QR…';
+    laser.style.display = 'block';
+    scanning = true;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const tick = ()=>{
+      if(!scanning) return;
+      if(video.readyState === video.HAVE_ENOUGH_DATA){
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = window.jsQR ? jsQR(imageData.data, imageData.width, imageData.height) : null;
+        if(code && code.data){
+          statusEl.textContent = 'Código detectado ✓';
+          handleScanned(code.data.trim());
+          return;
+        }
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+  }catch(e){
+    statusEl.textContent = 'Cámara no disponible — usa el código manual abajo.';
+  }
+}
+
+async function loadOperador(usuario){
+  try{
+    const res = await window.storage.get('operador:'+usuario, true);
+    return res ? JSON.parse(res.value) : null;
+  }catch(e){ return null; }
+}
+async function saveOperador(op){
+  try{ await window.storage.set('operador:'+op.usuario, JSON.stringify(op), true); }catch(e){}
+}
+
+async function handleLogin(){
+  const err = document.getElementById('loginError');
+  err.style.display = 'none';
+  const usuario = document.getElementById('lUsuario').value.trim().toLowerCase();
+  const pin = document.getElementById('lPin').value.trim();
+  if(!usuario || !pin){ err.textContent = 'Ingresa usuario y PIN.'; err.style.display='block'; return; }
+  const op = await loadOperador(usuario);
+  if(!op || op.pin !== pin){ err.textContent = 'Usuario o PIN incorrecto.'; err.style.display='block'; return; }
+  state.auth = { usuario: op.usuario, nombre: op.nombre };
+  state.screen = 'main';
+  render();
+}
+
+async function handleRegistro(){
+  const err = document.getElementById('registroError');
+  err.style.display = 'none';
+  const nombre = document.getElementById('rNombre').value.trim();
+  const usuario = document.getElementById('rUsuario').value.trim().toLowerCase();
+  const pin = document.getElementById('rPin').value.trim();
+  const codigo = document.getElementById('rCodigo').value.trim();
+  if(!nombre || !usuario || !pin || !codigo){ err.textContent = 'Completa todos los campos.'; err.style.display='block'; return; }
+  if(pin.length < 4){ err.textContent = 'El PIN debe tener al menos 4 dígitos.'; err.style.display='block'; return; }
+  if(codigo.toUpperCase() !== CODIGO_REGISTRO){ err.textContent = 'Código de autorización incorrecto.'; err.style.display='block'; return; }
+  const existing = await loadOperador(usuario);
+  if(existing){ err.textContent = 'Ese usuario ya existe. Inicia sesión.'; err.style.display='block'; return; }
+  const op = { usuario, nombre, pin };
+  await saveOperador(op);
+  state.auth = { usuario, nombre };
+  state.screen = 'main';
+  render();
+}
+
+/* ---------------- GOOGLE SHEETS SYNC ---------------- */
+let googleCfg = { clientId:'891052272055-46rs4lp7lcbj9hlf5af5qeuf17q9v6kr.apps.googleusercontent.com', spreadsheetId:'' };
+let googleToken = null;      // { access_token, expiresAt }
+let tokenClient = null;
+let googleReadyPromise = null;
+
+async function loadGoogleConfig(){
+  try{
+    const res = await window.storage.get('config:google', true);
+    if(res) googleCfg = JSON.parse(res.value);
+  }catch(e){ /* no config yet */ }
+}
+async function saveGoogleConfig(){
+  try{ await window.storage.set('config:google', JSON.stringify(googleCfg), true); }catch(e){}
+}
+
+function renderConfig(){
+  const conectado = !!googleToken;
+  const tieneClientId = !!googleCfg.clientId;
+  const tieneHoja = !!googleCfg.spreadsheetId;
+  return `
+    <p class="eyebrow">Configuración</p>
+    <h2 class="step-title">Sincronización con Google Sheets</h2>
+    <div class="status-line">
+      <span class="status-dot ${conectado ? 'on':'off'}"></span>
+      ${conectado ? 'Conectado a Google — sincronizando en cada movimiento' : (tieneHoja ? 'Hoja configurada — falta conectar tu cuenta de Google' : 'Sin configurar')}
+    </div>
+
+    <div class="config-section">
+      <h4>1. ID de cliente de Google</h4>
+      <div class="config-note">Créalo en console.cloud.google.com → APIs y servicios → Credenciales → ID de cliente de OAuth (tipo "Aplicación web"). Habilita la API de Google Sheets y agrega el origen exacto desde el que abres esta app como "Origen autorizado de JavaScript".</div>
+      <div class="field">
+        <label for="cfgClientId">Client ID</label>
+        <input id="cfgClientId" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com" value="${googleCfg.clientId||''}" autocomplete="off">
+      </div>
+      <button class="btn btn-ghost" id="btnGuardarClientId">Guardar Client ID</button>
+    </div>
+
+    <div class="config-section">
+      <h4>2. Conectar tu cuenta</h4>
+      <button class="btn btn-primary" id="btnConectarGoogle" ${tieneClientId?'':'disabled'}>${conectado ? 'Reconectar cuenta de Google' : 'Conectar con Google'}</button>
+    </div>
+
+    <div class="config-section">
+      <h4>3. Hoja de cálculo destino</h4>
+      ${tieneHoja ? `<div class="config-note">Hoja activa: <a class="sheet-link" href="https://docs.google.com/spreadsheets/d/${googleCfg.spreadsheetId}/edit" target="_blank" rel="noopener">Abrir en Google Sheets ↗</a></div>` : `<div class="config-note">Aún no hay una hoja asignada.</div>`}
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="btnCrearHoja" ${conectado?'':'disabled'}>Crear hoja nueva</button>
+        <button class="btn btn-ghost" id="btnUsarHojaExistente" ${conectado?'':'disabled'}>Usar una existente</button>
+      </div>
+      <div class="field" id="hojaExistenteWrap" style="display:none; margin-top:10px;">
+        <label for="cfgSpreadsheetId">ID de la hoja (de su URL)</label>
+        <input id="cfgSpreadsheetId" type="text" placeholder="1AbCdEfGhIjKlmNoPQRstuVWXyz">
+        <button class="btn btn-ghost" id="btnGuardarHojaExistente" style="margin-top:8px;">Usar esta hoja</button>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <h4>4. Sincronización manual</h4>
+      <button class="btn btn-ghost" id="btnSyncTodo" ${conectado && tieneHoja ? '' : 'disabled'}>Reenviar todo el inventario ahora</button>
+      <div class="sync-toast" id="syncToast">Sincronizado ✓</div>
+    </div>
+
+    <button class="btn btn-ghost" id="btnConfigVolver" style="margin-top:18px;">← Volver</button>
+  `;
+}
+
+function ensureGoogleLoaded(){
+  if(googleReadyPromise) return googleReadyPromise;
+  googleReadyPromise = new Promise((resolve, reject)=>{
+    const check = ()=>{
+      if(window.google && window.google.accounts && window.google.accounts.oauth2) resolve();
+      else setTimeout(check, 150);
+    };
+    check();
+    setTimeout(()=>reject(new Error('Google Identity Services no cargó. Revisa tu conexión.')), 10000);
+  });
+  return googleReadyPromise;
+}
+
+async function conectarGoogle(){
+  await ensureGoogleLoaded();
+  return new Promise((resolve, reject)=>{
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: googleCfg.clientId,
+      scope: 'https://www.googleapis.com/auth/spreadsheets',
+      callback: (resp)=>{
+        if(resp.error){ reject(new Error(resp.error)); return; }
+        googleToken = { access_token: resp.access_token, expiresAt: Date.now() + (resp.expires_in*1000 - 60000) };
+        resolve(googleToken);
+      },
+    });
+    tokenClient.requestAccessToken({ prompt: 'consent' });
+  });
+}
+
+async function ensureToken(){
+  if(googleToken && Date.now() < googleToken.expiresAt) return googleToken.access_token;
+  await ensureGoogleLoaded();
+  return new Promise((resolve, reject)=>{
+    if(!tokenClient){
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: googleCfg.clientId,
+        scope: 'https://www.googleapis.com/auth/spreadsheets',
+        callback: ()=>{},
+      });
+    }
+    tokenClient.callback = (resp)=>{
+      if(resp.error){ reject(new Error(resp.error)); return; }
+      googleToken = { access_token: resp.access_token, expiresAt: Date.now() + (resp.expires_in*1000 - 60000) };
+      resolve(googleToken.access_token);
+    };
+    tokenClient.requestAccessToken({ prompt: '' });
+  });
+}
+
+async function crearHojaCalculo(){
+  const token = await ensureToken();
+  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+    method:'POST',
+    headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({
+      properties:{ title:'Control de Inventario' },
+      sheets:[
+        { properties:{ title:'Inventario' } },
+        { properties:{ title:'Movimientos' } }
+      ]
+    })
+  });
+  if(!res.ok) throw new Error('No se pudo crear la hoja ('+res.status+')');
+  const data = await res.json();
+  const sheetId = data.spreadsheetId;
+  await appendRow(sheetId, 'Inventario', ['SKU','Nombre','Stock','Última actualización']);
+  await appendRow(sheetId, 'Movimientos', ['Fecha','Tipo','SKU','Nombre','Cantidad','Anterior','Nuevo','Operador']);
+  return sheetId;
+}
+
+async function appendRow(spreadsheetId, sheetName, row){
+  const token = await ensureToken();
+  const range = encodeURIComponent(sheetName + '!A:Z');
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`, {
+    method:'POST',
+    headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+    body: JSON.stringify({ values:[row] })
+  });
+  if(!res.ok) throw new Error('Error al escribir en Sheets ('+res.status+')');
+  return res.json();
+}
+
+async function upsertInventoryRow(item){
+  if(!googleToken || !googleCfg.spreadsheetId) return;
+  try{
+    const token = await ensureToken();
+    const getRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${googleCfg.spreadsheetId}/values/Inventario!A:A`, {
+      headers:{ 'Authorization':'Bearer '+token }
+    });
+    const data = await getRes.json();
+    const col = data.values || [];
+    let rowIndex = -1;
+    for(let i=0;i<col.length;i++){ if(col[i][0] === item.sku){ rowIndex = i+1; break; } }
+    const rowValues = [item.sku, item.nombre, item.stock, new Date().toLocaleString('es-ES')];
+    if(rowIndex > 0){
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${googleCfg.spreadsheetId}/values/Inventario!A${rowIndex}:D${rowIndex}?valueInputOption=USER_ENTERED`, {
+        method:'PUT',
+        headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+        body: JSON.stringify({ values:[rowValues] })
+      });
+    } else {
+      await appendRow(googleCfg.spreadsheetId, 'Inventario', rowValues);
+    }
+  }catch(e){ /* fallo silencioso: no interrumpe la operación local */ }
+}
+
+async function syncMovimiento(entry){
+  if(!googleToken || !googleCfg.spreadsheetId) return;
+  try{
+    await appendRow(googleCfg.spreadsheetId, 'Movimientos', [
+      new Date(entry.fecha).toLocaleString('es-ES'), entry.tipo, entry.sku, entry.nombre||'',
+      entry.cantidad, entry.anterior, entry.nuevo, state.auth ? state.auth.nombre : ''
+    ]);
+  }catch(e){ /* fallo silencioso */ }
+}
+
+async function sincronizarTodoElInventario(){
+  const toast = document.getElementById('syncToast');
+  try{
+    const list = await window.storage.list('item:', true);
+    if(list && list.keys){
+      for(const k of list.keys){
+        const res = await window.storage.get(k, true);
+        if(res){ const item = JSON.parse(res.value); await upsertInventoryRow(item); }
+      }
+    }
+    if(toast){ toast.style.display='block'; setTimeout(()=>toast.style.display='none', 2500); }
+  }catch(e){ /* ignorar */ }
+}
+
+(async function init(){
+  await loadGoogleConfig();
+  render();
+})();
+window.addEventListener('beforeunload', stopCamera);
+</script>
+</body>
+</html>
