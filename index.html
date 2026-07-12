@@ -299,6 +299,19 @@
   .sheet-link{ font-size:12.5px; color:var(--steel); font-weight:600; text-decoration:none; }
   .sheet-link:hover{ text-decoration:underline; }
   .sync-toast{ font-size:11.5px; color:var(--success); margin-top:8px; display:none; }
+
+  /* ---- listado ---- */
+  .listado-row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:12px 4px; border-top:1px solid #EEECE4; cursor:pointer; transition:.12s ease;
+  }
+  .listado-row:first-child{ border-top:none; }
+  .listado-row:hover{ background:var(--steel-soft); border-radius:8px; }
+  .lr-nombre{ font-weight:600; font-size:14px; }
+  .lr-sku{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-soft); margin-top:2px; }
+  .lr-side{ text-align:right; }
+  .lr-stock{ font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:19px; }
+  .lr-fecha{ font-family:'IBM Plex Mono', monospace; font-size:10.5px; color:var(--ink-soft); margin-top:2px; }
 </style>
 </head>
 <body>
@@ -336,7 +349,7 @@ function renderStepper(){
   }
   pill.innerHTML = state.auth ? `<div class="operador-pill"><span class="op-name">${state.auth.nombre}</span><button id="btnLogout" title="Cerrar sesión">⏻</button></div>` : '';
   gear.style.display = state.auth ? 'flex' : 'none';
-  if(state.screen === 'crear' || state.screen === 'config'){ el.style.display = 'none'; return; }
+  if(state.screen === 'crear' || state.screen === 'config' || state.screen === 'listado'){ el.style.display = 'none'; return; }
   el.style.display = 'flex';
   el.innerHTML = '';
   for(let i=1;i<=4;i++){
@@ -400,6 +413,10 @@ function render(){
   }
   if(state.screen === 'config'){
     c.innerHTML = renderConfig(); bindEvents();
+    return;
+  }
+  if(state.screen === 'listado'){
+    c.innerHTML = renderListadoShell(); bindEvents(); refreshListado('');
     return;
   }
   if(state.step===1) c.innerHTML = renderStep1();
@@ -484,6 +501,7 @@ function renderStep1(){
         </button>`).join('')}
     </div>
     <button class="btn-crear" id="btnGoCrear"><span class="plus">+</span> Crear código para un artículo nuevo</button>
+    <button class="btn-crear" id="btnGoListado"><span class="plus">☰</span> Ver listado de artículos y saldos</button>
   `;
 }
 
@@ -701,6 +719,15 @@ function bindEvents(){
 
   const goCrear = document.getElementById('btnGoCrear');
   if(goCrear) goCrear.onclick = ()=>{ state.screen='crear'; state.crearItem=null; render(); };
+
+  const goListado = document.getElementById('btnGoListado');
+  if(goListado) goListado.onclick = ()=>{ state.screen='listado'; render(); };
+
+  const listadoBuscar = document.getElementById('listadoBuscar');
+  if(listadoBuscar) listadoBuscar.oninput = ()=>{ refreshListado(listadoBuscar.value.trim()); };
+
+  const btnListadoVolver = document.getElementById('btnListadoVolver');
+  if(btnListadoVolver) btnListadoVolver.onclick = ()=>{ state.screen='main'; state.step=1; render(); };
 
   const autoSku = document.getElementById('btnAutoSku');
   if(autoSku) autoSku.onclick = ()=>{ document.getElementById('cSku').value = genSku(); };
@@ -1009,6 +1036,69 @@ async function loadGoogleConfig(){
 }
 async function saveGoogleConfig(){
   try{ await window.storage.set('config:google', JSON.stringify(googleCfg), true); }catch(e){}
+}
+
+function renderListadoShell(){
+  return `
+    <p class="eyebrow">Inventario completo</p>
+    <h2 class="step-title">Listado de artículos</h2>
+    <div class="field">
+      <label for="listadoBuscar">Buscar por nombre o SKU</label>
+      <input id="listadoBuscar" type="text" placeholder="Ej. filtro, ART-0245" autocomplete="off">
+    </div>
+    <div id="listadoRows"><div class="helper">Cargando…</div></div>
+    <button class="btn btn-ghost" id="btnListadoVolver" style="margin-top:14px;">← Volver</button>
+  `;
+}
+
+async function refreshListado(filtro){
+  const holder = document.getElementById('listadoRows');
+  if(!holder) return;
+  try{
+    const list = await window.storage.list('item:', true);
+    let items = [];
+    if(list && list.keys){
+      for(const k of list.keys){
+        const res = await window.storage.get(k, true);
+        if(res) items.push(JSON.parse(res.value));
+      }
+    }
+    items.forEach(it=>{
+      const h = it.historial || [];
+      it._last = h.length ? h[h.length-1].fecha : 0;
+    });
+    if(filtro){
+      const f = filtro.toLowerCase();
+      items = items.filter(it => it.sku.toLowerCase().includes(f) || (it.nombre||'').toLowerCase().includes(f));
+    }
+    items.sort((a,b)=> b._last - a._last);
+    if(document.getElementById('listadoRows') !== holder) return; // pantalla cambió mientras cargaba
+    if(!items.length){ holder.innerHTML = '<div class="helper">No hay artículos registrados todavía.</div>'; return; }
+    holder.innerHTML = items.map(it => `
+      <div class="listado-row" data-sku="${it.sku}">
+        <div class="lr-main">
+          <div class="lr-nombre">${it.nombre || '(sin nombre)'}</div>
+          <div class="lr-sku">${it.sku}</div>
+        </div>
+        <div class="lr-side">
+          <div class="lr-stock">${it.stock}</div>
+          <div class="lr-fecha">${it._last ? fmtDate(it._last) : '—'}</div>
+        </div>
+      </div>`).join('');
+    holder.querySelectorAll('.listado-row').forEach(row=>{
+      row.onclick = async ()=>{
+        const sku = row.dataset.sku;
+        const item = await loadItem(sku);
+        state.sku = sku;
+        state.lastResult = { tipo:'consulta', item };
+        state.screen = 'main';
+        state.step = 4;
+        render();
+      };
+    });
+  }catch(e){
+    holder.innerHTML = '<div class="helper">No se pudo cargar el listado.</div>';
+  }
 }
 
 function renderConfig(){
