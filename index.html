@@ -8,7 +8,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
     --bg:#E4E1D6;
@@ -43,7 +42,7 @@
 
   /* ---- Header / ticket stepper ---- */
   .brand{
-    display:flex; align-items:baseline; gap:10px; margin-bottom:18px;
+    display:flex; align-items:center; gap:10px; margin-bottom:18px;
   }
   .brand .mark{
     font-family:'Barlow Condensed', sans-serif;
@@ -164,6 +163,7 @@
   .btn-primary:disabled{ background:var(--line); color:#8a8a86; cursor:not-allowed; }
   .btn-ghost{ background:transparent; color:var(--ink-soft); border:1.5px solid var(--line); margin-top:8px; }
   .btn-ghost:hover{ border-color:var(--ink); color:var(--ink); }
+  .btn-ghost:disabled{ opacity:.5; cursor:not-allowed; }
   .btn-row{ display:flex; gap:8px; margin-top:4px; }
   .btn-row .btn{ flex:1; }
 
@@ -182,6 +182,10 @@
   .banner-new{
     background:#FFF6DE; border:1px solid #EAD48A; border-radius:10px; padding:10px 12px;
     font-size:12.5px; color:#7A5B00; margin-bottom:14px;
+  }
+  .banner-danger{
+    background:var(--danger-soft); border:1px solid #eec3ba; border-radius:10px; padding:10px 12px;
+    font-size:12.5px; color:var(--danger); margin-bottom:14px;
   }
 
   /* ---- resumen (ticket) ---- */
@@ -211,6 +215,7 @@
   .tag.entrada{ background:var(--success-soft); color:var(--success); }
   .tag.salida{ background:var(--danger-soft); color:var(--danger); }
   .tag.inventario{ background:var(--steel-soft); color:var(--steel); }
+  .tag.alta{ background:var(--steel-soft); color:var(--steel); }
   .h-item .h-fecha{ color:var(--ink-soft); font-family:'IBM Plex Mono', monospace; font-size:10.5px; }
 
   .error-msg{ color:var(--danger); font-size:12.5px; margin:-6px 0 12px; }
@@ -279,7 +284,6 @@
     cursor:pointer; font-size:12px; color:var(--ink-soft); line-height:1;
   }
   .operador-pill button:hover{ color:var(--danger); }
-  .brand{ align-items:center; }
   .gear-btn{
     border:1px solid var(--line); background:var(--surface); border-radius:999px;
     width:30px; height:30px; cursor:pointer; font-size:14px; color:var(--ink-soft); margin-left:8px;
@@ -287,10 +291,11 @@
   }
   .gear-btn:hover{ border-color:var(--steel); color:var(--steel); }
 
-  /* ---- config / google sheets ---- */
-  .status-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  /* ---- config / apps script ---- */
+  .status-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; flex-shrink:0; }
   .status-dot.off{ background:var(--line); }
   .status-dot.on{ background:var(--success); }
+  .status-dot.bad{ background:var(--danger); }
   .status-line{ display:flex; align-items:center; font-size:12.5px; color:var(--ink-soft); margin-bottom:16px; }
   .config-section{ border-top:1px dashed var(--line); padding-top:16px; margin-top:16px; }
   .config-section:first-of-type{ border-top:none; padding-top:0; margin-top:0; }
@@ -299,6 +304,7 @@
   .sheet-link{ font-size:12.5px; color:var(--steel); font-weight:600; text-decoration:none; }
   .sheet-link:hover{ text-decoration:underline; }
   .sync-toast{ font-size:11.5px; color:var(--success); margin-top:8px; display:none; }
+  .config-steps{ font-size:11.5px; color:var(--ink-soft); line-height:1.7; padding-left:18px; margin:0 0 14px; }
 
   /* ---- listado ---- */
   .listado-row{
@@ -323,19 +329,73 @@
 
 <script>
 const STEP_LABELS = ["Tipo","Escanear","Datos","Resumen"];
-const CODIGO_REGISTRO = "ALMACEN-2024"; // código que el supervisor entrega para autorizar nuevos operadores
+const CODIGO_REGISTRO = "ALMACEN-2024"; // debe coincidir con el del Apps Script
+
+// URL del Web App de Apps Script (única para todo el equipo). Si queda vacía,
+// cada quien puede pegarla en ⚙ Configuración y se guarda solo en su navegador.
+const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbyNGLXcaMQqZn0qZ2sVx4RkHDQkRh6I38n23WBGDD6yRuUgrfBuhBPvGMG1AszWL1J0/exec";
+let API_URL = DEFAULT_API_URL;
+try{ const saved = localStorage.getItem('apiUrl'); if(saved) API_URL = saved; }catch(e){}
+
 let state = {
-  screen: 'login',       // login | registro | main | crear
+  screen: 'login',       // login | registro | main | crear | config | listado
   auth: null,            // {usuario, nombre}
   step: 1,
-  tipo: null,          // entrada | salida | inventario | consulta
+  tipo: null,            // entrada | salida | inventario | consulta
   sku: null,
-  item: null,           // {sku, nombre, stock, historial:[]}
+  item: null,            // {sku, nombre, stock}
   isNew: false,
   lastResult: null,
   crearItem: null
 };
 let stream = null, scanning = false, rafId = null;
+
+/* ---------------- API (Google Apps Script) ---------------- */
+async function apiGet(params){
+  if(!API_URL) throw new Error('Falta configurar la URL del Web App (⚙ Configuración).');
+  const qs = new URLSearchParams(params).toString();
+  let res;
+  try{ res = await fetch(API_URL + '?' + qs); }
+  catch(e){ throw new Error('No se pudo conectar con la hoja. Revisa tu conexión o la URL configurada.'); }
+  if(!res.ok) throw new Error('La hoja respondió con un error (' + res.status + ').');
+  const data = await res.json();
+  if(data && data.ok === false) throw new Error(data.error || 'Error desconocido');
+  return data;
+}
+
+async function probarConexion(){
+  return apiGet({ action:'ping' });
+}
+async function apiLogin(usuario, pin){ return apiGet({ action:'login', usuario, pin }); }
+async function apiRegistrar(nombre, usuario, pin, codigo){ return apiGet({ action:'registrar', nombre, usuario, pin, codigo }); }
+async function apiGetItem(sku){ const r = await apiGet({ action:'item', sku }); return r.item; }
+async function apiGetHistorial(sku){ const r = await apiGet({ action:'historial', sku }); return r.historial || []; }
+async function apiGetListado(){ const r = await apiGet({ action:'listado' }); return r.items || []; }
+async function apiGuardarItem(item){ return apiGet({ action:'guardarItem', sku:item.sku, nombre:item.nombre, stock:item.stock }); }
+async function apiMovimiento(entry){
+  return apiGet({
+    action:'movimiento', tipo:entry.tipo, sku:entry.sku, nombre:entry.nombre||'',
+    cantidad:entry.cantidad, anterior:entry.anterior, nuevo:entry.nuevo,
+    operador: state.auth ? state.auth.nombre : ''
+  });
+}
+
+async function cargarItemConHistorial(sku){
+  const [item, historial] = await Promise.all([apiGetItem(sku), apiGetHistorial(sku)]);
+  return { item: item || { sku, nombre:'', stock:0 }, historial, esNuevo: !item };
+}
+
+function fmtDate(ts){
+  const d = new Date(ts);
+  if(isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+}
+
+function stopCamera(){
+  scanning = false;
+  if(rafId) cancelAnimationFrame(rafId);
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; }
+}
 
 function renderStepper(){
   const el = document.getElementById('stepper');
@@ -372,27 +432,6 @@ function resetFlow(){
   const auth = state.auth;
   state = { screen:'main', auth, step:1, tipo:null, sku:null, item:null, isNew:false, lastResult:null, crearItem:null };
   render();
-}
-
-async function loadItem(sku){
-  try{
-    const res = await window.storage.get('item:'+sku, true);
-    return res ? JSON.parse(res.value) : null;
-  }catch(e){ return null; }
-}
-async function saveItem(item){
-  try{ await window.storage.set('item:'+item.sku, JSON.stringify(item), true); }catch(e){}
-}
-
-function fmtDate(ts){
-  const d = new Date(ts);
-  return d.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
-}
-
-function stopCamera(){
-  scanning = false;
-  if(rafId) cancelAnimationFrame(rafId);
-  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; }
 }
 
 /* ---------------- RENDER ---------------- */
@@ -436,7 +475,7 @@ function renderLogin(){
         <div class="sub">Identifícate para registrar movimientos</div>
         <div class="field">
           <label for="lUsuario">Usuario</label>
-          <input id="lUsuario" type="text" placeholder="Ej. jperez" autocomplete="off">
+          <input id="lUsuario" type="text" placeholder="Ej. cuadrante1" autocomplete="off">
         </div>
         <div class="field">
           <label for="lPin">PIN</label>
@@ -445,6 +484,7 @@ function renderLogin(){
         <div id="loginError" class="error-msg" style="display:none;"></div>
         <button class="btn btn-primary" id="btnLogin">Ingresar</button>
         <button class="link-toggle" id="btnGoRegistro">¿Nuevo operador? Regístrate aquí</button>
+        <button class="link-toggle" id="btnGoConfigLogin">⚙ Configurar conexión con la hoja</button>
       </div>
     </div>
   `;
@@ -635,23 +675,23 @@ function renderStep4(){
   if(!r) return `<p>No hay datos.</p>`;
   if(r.tipo==='consulta'){
     const item = r.item;
-    const hist = (item.historial||[]).slice(-5).reverse();
+    const hist = (r.historial||[]).slice(-5).reverse();
     return `
       <p class="eyebrow">Paso 4 de 4 · Consulta</p>
       <div class="ticket-summary">
         <div class="result-icon info">◎</div>
-        <h3>${item.nombre}</h3>
+        <h3>${item.nombre || '(sin nombre)'}</h3>
         <div class="meta">${item.sku}</div>
       </div>
       <div class="stat-row">
         <div class="stat"><div class="k">Stock actual</div><div class="v">${item.stock}</div></div>
-        <div class="stat"><div class="k">Movimientos</div><div class="v">${(item.historial||[]).length}</div></div>
+        <div class="stat"><div class="k">Movimientos</div><div class="v">${(r.historial||[]).length}</div></div>
       </div>
       <div class="history">
         <div class="h-title">Últimos movimientos</div>
         ${hist.length ? hist.map(h=>`
           <div class="h-item">
-            <span><span class="tag ${h.tipo}">${h.tipo}</span>${h.detalle||''}</span>
+            <span><span class="tag ${h.tipo}">${h.tipo}</span>${h.operador ? 'reg. '+h.operador : ''}</span>
             <span class="h-fecha">${fmtDate(h.fecha)}</span>
           </div>`).join('') : '<div class="h-item">Sin movimientos registrados.</div>'}
       </div>
@@ -685,6 +725,98 @@ function renderStep4(){
   `;
 }
 
+function renderListadoShell(){
+  return `
+    <p class="eyebrow">Inventario completo</p>
+    <h2 class="step-title">Listado de artículos</h2>
+    <div class="field">
+      <label for="listadoBuscar">Buscar por nombre o SKU</label>
+      <input id="listadoBuscar" type="text" placeholder="Ej. filtro, ART-0245" autocomplete="off">
+    </div>
+    <div id="listadoRows"><div class="helper">Cargando…</div></div>
+    <button class="btn btn-ghost" id="btnListadoVolver" style="margin-top:14px;">← Volver</button>
+  `;
+}
+
+async function refreshListado(filtro){
+  const holder = document.getElementById('listadoRows');
+  if(!holder) return;
+  try{
+    let items = await apiGetListado();
+    if(filtro){
+      const f = filtro.toLowerCase();
+      items = items.filter(it => String(it.sku).toLowerCase().includes(f) || String(it.nombre||'').toLowerCase().includes(f));
+    }
+    items.sort((a,b)=> new Date(b.actualizado) - new Date(a.actualizado));
+    if(document.getElementById('listadoRows') !== holder) return;
+    if(!items.length){ holder.innerHTML = '<div class="helper">No hay artículos registrados todavía.</div>'; return; }
+    holder.innerHTML = items.map(it => `
+      <div class="listado-row" data-sku="${it.sku}">
+        <div class="lr-main">
+          <div class="lr-nombre">${it.nombre || '(sin nombre)'}</div>
+          <div class="lr-sku">${it.sku}</div>
+        </div>
+        <div class="lr-side">
+          <div class="lr-stock">${it.stock}</div>
+          <div class="lr-fecha">${it.actualizado ? fmtDate(it.actualizado) : '—'}</div>
+        </div>
+      </div>`).join('');
+    holder.querySelectorAll('.listado-row').forEach(row=>{
+      row.onclick = async ()=>{
+        const sku = row.dataset.sku;
+        try{
+          const { item, historial } = await cargarItemConHistorial(sku);
+          state.sku = sku;
+          state.lastResult = { tipo:'consulta', item, historial };
+          state.screen = 'main';
+          state.step = 4;
+          render();
+        }catch(e){ alert('No se pudo abrir la ficha: ' + e.message); }
+      };
+    });
+  }catch(e){
+    holder.innerHTML = `<div class="helper">No se pudo cargar el listado: ${e.message}</div>`;
+  }
+}
+
+function renderConfig(){
+  return `
+    <p class="eyebrow">Configuración</p>
+    <h2 class="step-title">Conexión con Google Sheets</h2>
+    <div class="status-line" id="apiStatusLine">
+      <span class="status-dot ${API_URL ? 'off' : 'off'}"></span>
+      ${API_URL ? 'URL configurada — presiona "Probar conexión"' : 'Sin configurar'}
+    </div>
+
+    <div class="config-section">
+      <h4>¿Primera vez? Despliega el Web App</h4>
+      <ol class="config-steps">
+        <li>Abre tu hoja de Google Sheets.</li>
+        <li>Extensiones → Apps Script.</li>
+        <li>Pega el código que te compartí (Codigo-AppsScript.gs) y guarda.</li>
+        <li>Implementar → Nueva implementación → tipo "Aplicación web".</li>
+        <li>Ejecutar como "Yo", acceso "Cualquier usuario".</li>
+        <li>Copia la URL que termina en <code>/exec</code> y pégala abajo.</li>
+      </ol>
+    </div>
+
+    <div class="config-section">
+      <h4>URL del Web App</h4>
+      <div class="field">
+        <label for="cfgApiUrl">Termina en /exec</label>
+        <input id="cfgApiUrl" type="text" placeholder="https://script.google.com/macros/s/AKfycb.../exec" value="${API_URL||''}" autocomplete="off">
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="btnGuardarApiUrl">Guardar</button>
+        <button class="btn btn-primary" id="btnProbarConexion">Probar conexión</button>
+      </div>
+      <div class="sync-toast" id="syncToast"></div>
+    </div>
+
+    <button class="btn btn-ghost" id="btnConfigVolver" style="margin-top:18px;">← Volver</button>
+  `;
+}
+
 /* ---------------- EVENTS ---------------- */
 function bindEvents(){
   document.querySelectorAll('.tipo-btn').forEach(b=>{
@@ -700,8 +832,9 @@ function bindEvents(){
   if(manualBtn) manualBtn.onclick = async ()=>{
     const val = document.getElementById('manualSku').value.trim();
     const err = document.getElementById('manualError');
+    err.style.display = 'none';
     if(!val){ err.textContent = 'Ingresa un código de artículo.'; err.style.display='block'; return; }
-    await handleScanned(val);
+    await handleScanned(val, err);
   };
 
   const confirmBtn = document.getElementById('btnConfirm');
@@ -712,9 +845,11 @@ function bindEvents(){
 
   const consultThis = document.getElementById('btnConsultThis');
   if(consultThis) consultThis.onclick = async ()=>{
-    const item = await loadItem(state.sku);
-    state.lastResult = { tipo:'consulta', item };
-    render();
+    try{
+      const { item, historial } = await cargarItemConHistorial(state.sku);
+      state.lastResult = { tipo:'consulta', item, historial };
+      render();
+    }catch(e){ alert('No se pudo cargar la ficha: ' + e.message); }
   };
 
   const goCrear = document.getElementById('btnGoCrear');
@@ -757,6 +892,9 @@ function bindEvents(){
   const goLogin = document.getElementById('btnGoLogin');
   if(goLogin) goLogin.onclick = ()=>{ state.screen='login'; render(); };
 
+  const goConfigLogin = document.getElementById('btnGoConfigLogin');
+  if(goConfigLogin) goConfigLogin.onclick = ()=>{ state.screen='config'; render(); };
+
   const btnLogin = document.getElementById('btnLogin');
   if(btnLogin) btnLogin.onclick = handleLogin;
 
@@ -792,52 +930,38 @@ function bindEvents(){
   if(btnGear) btnGear.onclick = ()=>{ state.screen='config'; render(); };
 
   const btnConfigVolver = document.getElementById('btnConfigVolver');
-  if(btnConfigVolver) btnConfigVolver.onclick = ()=>{ state.screen='main'; render(); };
+  if(btnConfigVolver) btnConfigVolver.onclick = ()=>{ state.screen = state.auth ? 'main' : 'login'; render(); };
 
-  const btnGuardarClientId = document.getElementById('btnGuardarClientId');
-  if(btnGuardarClientId) btnGuardarClientId.onclick = async ()=>{
-    const val = document.getElementById('cfgClientId').value.trim();
-    if(!val) return;
-    googleCfg.clientId = val;
-    await saveGoogleConfig();
+  const btnGuardarApiUrl = document.getElementById('btnGuardarApiUrl');
+  if(btnGuardarApiUrl) btnGuardarApiUrl.onclick = ()=>{
+    const val = document.getElementById('cfgApiUrl').value.trim();
+    API_URL = val;
+    try{ localStorage.setItem('apiUrl', val); }catch(e){}
     render();
   };
 
-  const btnConectarGoogle = document.getElementById('btnConectarGoogle');
-  if(btnConectarGoogle) btnConectarGoogle.onclick = async ()=>{
-    btnConectarGoogle.disabled = true; btnConectarGoogle.textContent = 'Conectando…';
-    try{ await conectarGoogle(); render(); }
-    catch(e){ alert('No se pudo conectar: ' + e.message); render(); }
-  };
-
-  const btnCrearHoja = document.getElementById('btnCrearHoja');
-  if(btnCrearHoja) btnCrearHoja.onclick = async ()=>{
-    btnCrearHoja.disabled = true; btnCrearHoja.textContent = 'Creando…';
+  const btnProbarConexion = document.getElementById('btnProbarConexion');
+  if(btnProbarConexion) btnProbarConexion.onclick = async ()=>{
+    const val = document.getElementById('cfgApiUrl').value.trim();
+    API_URL = val;
+    try{ localStorage.setItem('apiUrl', val); }catch(e){}
+    const toast = document.getElementById('syncToast');
+    const line = document.getElementById('apiStatusLine');
+    btnProbarConexion.disabled = true; btnProbarConexion.textContent = 'Probando…';
     try{
-      const id = await crearHojaCalculo();
-      googleCfg.spreadsheetId = id;
-      await saveGoogleConfig();
-      render();
-    }catch(e){ alert('No se pudo crear la hoja: ' + e.message); render(); }
+      await probarConexion();
+      line.innerHTML = '<span class="status-dot on"></span>Conectado correctamente';
+      toast.style.color = 'var(--success)';
+      toast.textContent = 'La conexión funciona ✓';
+      toast.style.display = 'block';
+    }catch(e){
+      line.innerHTML = '<span class="status-dot bad"></span>No se pudo conectar';
+      toast.style.color = 'var(--danger)';
+      toast.textContent = e.message;
+      toast.style.display = 'block';
+    }
+    btnProbarConexion.disabled = false; btnProbarConexion.textContent = 'Probar conexión';
   };
-
-  const btnUsarHojaExistente = document.getElementById('btnUsarHojaExistente');
-  if(btnUsarHojaExistente) btnUsarHojaExistente.onclick = ()=>{
-    const wrap = document.getElementById('hojaExistenteWrap');
-    wrap.style.display = wrap.style.display === 'none' ? 'block' : 'none';
-  };
-
-  const btnGuardarHojaExistente = document.getElementById('btnGuardarHojaExistente');
-  if(btnGuardarHojaExistente) btnGuardarHojaExistente.onclick = async ()=>{
-    const val = document.getElementById('cfgSpreadsheetId').value.trim();
-    if(!val) return;
-    googleCfg.spreadsheetId = val;
-    await saveGoogleConfig();
-    render();
-  };
-
-  const btnSyncTodo = document.getElementById('btnSyncTodo');
-  if(btnSyncTodo) btnSyncTodo.onclick = sincronizarTodoElInventario;
 }
 
 function genSku(){
@@ -863,40 +987,94 @@ async function handleCrearConfirm(){
   let sku = document.getElementById('cSku').value.trim();
   const stockRaw = document.getElementById('cStock').value;
   const stock = parseInt(stockRaw, 10);
+  const btn = document.getElementById('btnCrearConfirm');
 
   if(!nombre){ err.textContent = 'Ingresa el nombre del artículo.'; err.style.display='block'; return; }
   if(isNaN(stock) || stock < 0){ err.textContent = 'Ingresa un stock inicial válido.'; err.style.display='block'; return; }
 
-  if(!sku){
-    sku = genSku();
-    let existing = await loadItem(sku);
-    let tries = 0;
-    while(existing && tries < 8){ sku = genSku(); existing = await loadItem(sku); tries++; }
-  } else {
-    const existing = await loadItem(sku);
-    if(existing){ err.textContent = 'Ese código ya existe. Usa "Autogenerar" o elige otro.'; err.style.display='block'; return; }
+  btn.disabled = true; btn.textContent = 'Generando…';
+  try{
+    if(!sku){
+      sku = genSku();
+      let existing = await apiGetItem(sku);
+      let tries = 0;
+      while(existing && tries < 8){ sku = genSku(); existing = await apiGetItem(sku); tries++; }
+    } else {
+      const existing = await apiGetItem(sku);
+      if(existing){ err.textContent = 'Ese código ya existe. Usa "Autogenerar" o elige otro.'; err.style.display='block'; btn.disabled=false; btn.textContent='Generar código QR'; return; }
+    }
+    const item = { sku, nombre, stock };
+    await apiGuardarItem(item);
+    await apiMovimiento({ tipo:'alta', sku, nombre, cantidad:stock, anterior:0, nuevo:stock });
+    state.crearItem = item;
+    render();
+  }catch(e){
+    err.textContent = e.message; err.style.display='block';
+    btn.disabled = false; btn.textContent = 'Generar código QR';
   }
-
-  const item = { sku, nombre, stock, historial:[{ tipo:'inventario', cantidad:stock, anterior:0, nuevo:stock, detalle:'alta de artículo', fecha: Date.now() }] };
-  await saveItem(item);
-  upsertInventoryRow(item);
-  syncMovimiento({ tipo:'alta', sku, nombre, cantidad:stock, anterior:0, nuevo:stock, fecha: Date.now() });
-  state.crearItem = item;
-  render();
 }
 
-async function handleScanned(sku){
-  stopCamera();
-  state.sku = sku;
-  const item = await loadItem(sku);
-  if(item){ state.item = item; state.isNew = false; }
-  else { state.item = { sku, nombre:'', stock:0, historial:[] }; state.isNew = true; }
+async function handleLogin(){
+  const err = document.getElementById('loginError');
+  err.style.display = 'none';
+  const usuario = document.getElementById('lUsuario').value.trim().toLowerCase();
+  const pin = document.getElementById('lPin').value.trim();
+  const btn = document.getElementById('btnLogin');
+  if(!usuario || !pin){ err.textContent = 'Ingresa usuario y PIN.'; err.style.display='block'; return; }
+  btn.disabled = true; btn.textContent = 'Ingresando…';
+  try{
+    const res = await apiLogin(usuario, pin);
+    state.auth = { usuario: res.usuario, nombre: res.nombre };
+    state.screen = 'main';
+    render();
+  }catch(e){
+    err.textContent = e.message; err.style.display='block';
+    btn.disabled = false; btn.textContent = 'Ingresar';
+  }
+}
 
-  if(state.tipo === 'consulta'){
-    state.lastResult = { tipo:'consulta', item: state.item };
-    goTo(4);
-  } else {
-    goTo(3);
+async function handleRegistro(){
+  const err = document.getElementById('registroError');
+  err.style.display = 'none';
+  const nombre = document.getElementById('rNombre').value.trim();
+  const usuario = document.getElementById('rUsuario').value.trim().toLowerCase();
+  const pin = document.getElementById('rPin').value.trim();
+  const codigo = document.getElementById('rCodigo').value.trim();
+  const btn = document.getElementById('btnRegistro');
+  if(!nombre || !usuario || !pin || !codigo){ err.textContent = 'Completa todos los campos.'; err.style.display='block'; return; }
+  if(pin.length < 4){ err.textContent = 'El PIN debe tener al menos 4 dígitos.'; err.style.display='block'; return; }
+  if(codigo.toUpperCase() !== CODIGO_REGISTRO){ err.textContent = 'Código de autorización incorrecto.'; err.style.display='block'; return; }
+  btn.disabled = true; btn.textContent = 'Creando…';
+  try{
+    const res = await apiRegistrar(nombre, usuario, pin, codigo);
+    state.auth = { usuario: res.usuario, nombre: res.nombre };
+    state.screen = 'main';
+    render();
+  }catch(e){
+    err.textContent = e.message; err.style.display='block';
+    btn.disabled = false; btn.textContent = 'Crear acceso';
+  }
+}
+
+async function handleScanned(sku, errEl){
+  stopCamera();
+  try{
+    const item = await apiGetItem(sku);
+    state.sku = sku;
+    if(item){ state.item = item; state.isNew = false; }
+    else { state.item = { sku, nombre:'', stock:0 }; state.isNew = true; }
+
+    if(state.tipo === 'consulta'){
+      const historial = await apiGetHistorial(sku);
+      state.lastResult = { tipo:'consulta', item: state.item, historial };
+      goTo(4);
+    } else {
+      goTo(3);
+    }
+  }catch(e){
+    if(errEl){ errEl.textContent = e.message; errEl.style.display = 'block'; }
+    else alert(e.message);
+    goTo(2);
   }
 }
 
@@ -912,35 +1090,28 @@ async function handleConfirmStep3(){
   const cantidadRaw = document.getElementById('fCantidad').value;
   const cantidad = parseInt(cantidadRaw, 10);
   if(isNaN(cantidad) || cantidad < 0){ err.textContent = 'Ingresa una cantidad válida.'; err.style.display='block'; return; }
-  const notaField = document.getElementById('fNota');
-  const nota = notaField ? notaField.value.trim() : '';
 
   const anterior = state.item.stock;
-  let nuevo, delta, detalle;
-  if(tipo==='entrada'){
-    delta = cantidad; nuevo = anterior + cantidad;
-    detalle = nota ? `+${cantidad} · ${nota}` : `+${cantidad}`;
-  } else if(tipo==='salida'){
-    delta = -cantidad; nuevo = anterior - cantidad;
-    detalle = nota ? `-${cantidad} · ${nota}` : `-${cantidad}`;
-  } else if(tipo==='inventario'){
-    delta = cantidad - anterior; nuevo = cantidad;
-    detalle = `conteo: ${cantidad}`;
+  let nuevo, delta;
+  if(tipo==='entrada'){ delta = cantidad; nuevo = anterior + cantidad; }
+  else if(tipo==='salida'){ delta = -cantidad; nuevo = anterior - cantidad; }
+  else if(tipo==='inventario'){ delta = cantidad - anterior; nuevo = cantidad; }
+
+  const btn = document.getElementById('btnConfirm');
+  btn.disabled = true; btn.textContent = 'Guardando…';
+  try{
+    const item = { sku: state.item.sku, nombre, stock: nuevo };
+    await apiGuardarItem(item);
+    const fecha = new Date().toISOString();
+    await apiMovimiento({ tipo, sku:item.sku, nombre:item.nombre, cantidad, anterior, nuevo });
+
+    state.item = item;
+    state.lastResult = { tipo, sku:item.sku, anterior, nuevo, delta, fecha };
+    goTo(4);
+  }catch(e){
+    err.textContent = e.message; err.style.display='block';
+    btn.disabled = false; btn.textContent = 'Confirmar operación';
   }
-
-  const fecha = Date.now();
-  const opTag = state.auth ? state.auth.nombre : '';
-  const detalleFinal = opTag ? `${detalle} · reg. ${opTag}` : detalle;
-  const item = { sku: state.item.sku, nombre, stock: nuevo, historial: state.item.historial || [] };
-  item.historial.push({ tipo, cantidad, anterior, nuevo, detalle: detalleFinal, fecha });
-  if(item.historial.length > 20) item.historial = item.historial.slice(-20);
-  await saveItem(item);
-  upsertInventoryRow(item);
-  syncMovimiento({ tipo, sku:item.sku, nombre:item.nombre, cantidad, anterior, nuevo, fecha });
-
-  state.item = item;
-  state.lastResult = { tipo, sku:item.sku, anterior, nuevo, delta, fecha };
-  goTo(4);
 }
 
 /* ---------------- SCANNER ---------------- */
@@ -980,332 +1151,7 @@ async function initScanner(){
   }
 }
 
-async function loadOperador(usuario){
-  try{
-    const res = await window.storage.get('operador:'+usuario, true);
-    return res ? JSON.parse(res.value) : null;
-  }catch(e){ return null; }
-}
-async function saveOperador(op){
-  try{ await window.storage.set('operador:'+op.usuario, JSON.stringify(op), true); }catch(e){}
-}
-
-const DEFAULT_OPERADORES = [
-  { usuario:'cuadrante1', nombre:'Cuadrante1', pin:'1201' },
-  { usuario:'cuadrante2', nombre:'Cuadrante2', pin:'2202' },
-  { usuario:'cuadrante3', nombre:'Cuadrante3', pin:'3303' },
-  { usuario:'cuadrante4', nombre:'Cuadrante4', pin:'4404' },
-];
-async function seedOperadoresPredefinidos(){
-  for(const op of DEFAULT_OPERADORES){
-    try{
-      const existing = await loadOperador(op.usuario);
-      if(!existing) await saveOperador(op);
-    }catch(e){ /* ignorar y continuar con el siguiente */ }
-  }
-}
-
-async function handleLogin(){
-  const err = document.getElementById('loginError');
-  err.style.display = 'none';
-  const usuario = document.getElementById('lUsuario').value.trim().toLowerCase();
-  const pin = document.getElementById('lPin').value.trim();
-  if(!usuario || !pin){ err.textContent = 'Ingresa usuario y PIN.'; err.style.display='block'; return; }
-  const op = await loadOperador(usuario);
-  if(!op || op.pin !== pin){ err.textContent = 'Usuario o PIN incorrecto.'; err.style.display='block'; return; }
-  state.auth = { usuario: op.usuario, nombre: op.nombre };
-  state.screen = 'main';
-  render();
-}
-
-async function handleRegistro(){
-  const err = document.getElementById('registroError');
-  err.style.display = 'none';
-  const nombre = document.getElementById('rNombre').value.trim();
-  const usuario = document.getElementById('rUsuario').value.trim().toLowerCase();
-  const pin = document.getElementById('rPin').value.trim();
-  const codigo = document.getElementById('rCodigo').value.trim();
-  if(!nombre || !usuario || !pin || !codigo){ err.textContent = 'Completa todos los campos.'; err.style.display='block'; return; }
-  if(pin.length < 4){ err.textContent = 'El PIN debe tener al menos 4 dígitos.'; err.style.display='block'; return; }
-  if(codigo.toUpperCase() !== CODIGO_REGISTRO){ err.textContent = 'Código de autorización incorrecto.'; err.style.display='block'; return; }
-  const existing = await loadOperador(usuario);
-  if(existing){ err.textContent = 'Ese usuario ya existe. Inicia sesión.'; err.style.display='block'; return; }
-  const op = { usuario, nombre, pin };
-  await saveOperador(op);
-  state.auth = { usuario, nombre };
-  state.screen = 'main';
-  render();
-}
-
-/* ---------------- GOOGLE SHEETS SYNC ---------------- */
-let googleCfg = { clientId:'891052272055-46rs4lp7lcbj9hlf5af5qeuf17q9v6kr.apps.googleusercontent.com', spreadsheetId:'1mxrlxbw5db2LwU1WiJZrzTQvmoN3pVac3dSRHq3Hn7Q' };
-let googleToken = null;      // { access_token, expiresAt }
-let tokenClient = null;
-let googleReadyPromise = null;
-
-async function loadGoogleConfig(){
-  try{
-    const res = await window.storage.get('config:google', true);
-    if(res){
-      const stored = JSON.parse(res.value);
-      if(stored.clientId) googleCfg.clientId = stored.clientId;
-      if(stored.spreadsheetId) googleCfg.spreadsheetId = stored.spreadsheetId;
-    }
-  }catch(e){ /* no config yet, se usan los valores por defecto */ }
-}
-async function saveGoogleConfig(){
-  try{ await window.storage.set('config:google', JSON.stringify(googleCfg), true); }catch(e){}
-}
-
-function renderListadoShell(){
-  return `
-    <p class="eyebrow">Inventario completo</p>
-    <h2 class="step-title">Listado de artículos</h2>
-    <div class="field">
-      <label for="listadoBuscar">Buscar por nombre o SKU</label>
-      <input id="listadoBuscar" type="text" placeholder="Ej. filtro, ART-0245" autocomplete="off">
-    </div>
-    <div id="listadoRows"><div class="helper">Cargando…</div></div>
-    <button class="btn btn-ghost" id="btnListadoVolver" style="margin-top:14px;">← Volver</button>
-  `;
-}
-
-async function refreshListado(filtro){
-  const holder = document.getElementById('listadoRows');
-  if(!holder) return;
-  try{
-    const list = await window.storage.list('item:', true);
-    let items = [];
-    if(list && list.keys){
-      for(const k of list.keys){
-        const res = await window.storage.get(k, true);
-        if(res) items.push(JSON.parse(res.value));
-      }
-    }
-    items.forEach(it=>{
-      const h = it.historial || [];
-      it._last = h.length ? h[h.length-1].fecha : 0;
-    });
-    if(filtro){
-      const f = filtro.toLowerCase();
-      items = items.filter(it => it.sku.toLowerCase().includes(f) || (it.nombre||'').toLowerCase().includes(f));
-    }
-    items.sort((a,b)=> b._last - a._last);
-    if(document.getElementById('listadoRows') !== holder) return; // pantalla cambió mientras cargaba
-    if(!items.length){ holder.innerHTML = '<div class="helper">No hay artículos registrados todavía.</div>'; return; }
-    holder.innerHTML = items.map(it => `
-      <div class="listado-row" data-sku="${it.sku}">
-        <div class="lr-main">
-          <div class="lr-nombre">${it.nombre || '(sin nombre)'}</div>
-          <div class="lr-sku">${it.sku}</div>
-        </div>
-        <div class="lr-side">
-          <div class="lr-stock">${it.stock}</div>
-          <div class="lr-fecha">${it._last ? fmtDate(it._last) : '—'}</div>
-        </div>
-      </div>`).join('');
-    holder.querySelectorAll('.listado-row').forEach(row=>{
-      row.onclick = async ()=>{
-        const sku = row.dataset.sku;
-        const item = await loadItem(sku);
-        state.sku = sku;
-        state.lastResult = { tipo:'consulta', item };
-        state.screen = 'main';
-        state.step = 4;
-        render();
-      };
-    });
-  }catch(e){
-    holder.innerHTML = '<div class="helper">No se pudo cargar el listado.</div>';
-  }
-}
-
-function renderConfig(){
-  const conectado = !!googleToken;
-  const tieneClientId = !!googleCfg.clientId;
-  const tieneHoja = !!googleCfg.spreadsheetId;
-  return `
-    <p class="eyebrow">Configuración</p>
-    <h2 class="step-title">Sincronización con Google Sheets</h2>
-    <div class="status-line">
-      <span class="status-dot ${conectado ? 'on':'off'}"></span>
-      ${conectado ? 'Conectado a Google — sincronizando en cada movimiento' : (tieneHoja ? 'Hoja configurada — falta conectar tu cuenta de Google' : 'Sin configurar')}
-    </div>
-
-    <div class="config-section">
-      <h4>1. ID de cliente de Google</h4>
-      <div class="config-note">Créalo en console.cloud.google.com → APIs y servicios → Credenciales → ID de cliente de OAuth (tipo "Aplicación web"). Habilita la API de Google Sheets y agrega el origen exacto desde el que abres esta app como "Origen autorizado de JavaScript".</div>
-      <div class="field">
-        <label for="cfgClientId">Client ID</label>
-        <input id="cfgClientId" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com" value="${googleCfg.clientId||''}" autocomplete="off">
-      </div>
-      <button class="btn btn-ghost" id="btnGuardarClientId">Guardar Client ID</button>
-    </div>
-
-    <div class="config-section">
-      <h4>2. Conectar tu cuenta</h4>
-      <button class="btn btn-primary" id="btnConectarGoogle" ${tieneClientId?'':'disabled'}>${conectado ? 'Reconectar cuenta de Google' : 'Conectar con Google'}</button>
-    </div>
-
-    <div class="config-section">
-      <h4>3. Hoja de cálculo destino</h4>
-      ${tieneHoja ? `<div class="config-note">Hoja activa: <a class="sheet-link" href="https://docs.google.com/spreadsheets/d/${googleCfg.spreadsheetId}/edit" target="_blank" rel="noopener">Abrir en Google Sheets ↗</a></div>` : `<div class="config-note">Aún no hay una hoja asignada.</div>`}
-      <div class="btn-row">
-        <button class="btn btn-ghost" id="btnCrearHoja" ${conectado?'':'disabled'}>Crear hoja nueva</button>
-        <button class="btn btn-ghost" id="btnUsarHojaExistente" ${conectado?'':'disabled'}>Usar una existente</button>
-      </div>
-      <div class="field" id="hojaExistenteWrap" style="display:none; margin-top:10px;">
-        <label for="cfgSpreadsheetId">ID de la hoja (de su URL)</label>
-        <input id="cfgSpreadsheetId" type="text" placeholder="1AbCdEfGhIjKlmNoPQRstuVWXyz">
-        <button class="btn btn-ghost" id="btnGuardarHojaExistente" style="margin-top:8px;">Usar esta hoja</button>
-      </div>
-    </div>
-
-    <div class="config-section">
-      <h4>4. Sincronización manual</h4>
-      <button class="btn btn-ghost" id="btnSyncTodo" ${conectado && tieneHoja ? '' : 'disabled'}>Reenviar todo el inventario ahora</button>
-      <div class="sync-toast" id="syncToast">Sincronizado ✓</div>
-    </div>
-
-    <button class="btn btn-ghost" id="btnConfigVolver" style="margin-top:18px;">← Volver</button>
-  `;
-}
-
-function ensureGoogleLoaded(){
-  if(googleReadyPromise) return googleReadyPromise;
-  googleReadyPromise = new Promise((resolve, reject)=>{
-    const check = ()=>{
-      if(window.google && window.google.accounts && window.google.accounts.oauth2) resolve();
-      else setTimeout(check, 150);
-    };
-    check();
-    setTimeout(()=>reject(new Error('Google Identity Services no cargó. Revisa tu conexión.')), 10000);
-  });
-  return googleReadyPromise;
-}
-
-async function conectarGoogle(){
-  await ensureGoogleLoaded();
-  return new Promise((resolve, reject)=>{
-    tokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: googleCfg.clientId,
-      scope: 'https://www.googleapis.com/auth/spreadsheets',
-      callback: (resp)=>{
-        if(resp.error){ reject(new Error(resp.error)); return; }
-        googleToken = { access_token: resp.access_token, expiresAt: Date.now() + (resp.expires_in*1000 - 60000) };
-        resolve(googleToken);
-      },
-    });
-    tokenClient.requestAccessToken({ prompt: 'consent' });
-  });
-}
-
-async function ensureToken(){
-  if(googleToken && Date.now() < googleToken.expiresAt) return googleToken.access_token;
-  await ensureGoogleLoaded();
-  return new Promise((resolve, reject)=>{
-    if(!tokenClient){
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: googleCfg.clientId,
-        scope: 'https://www.googleapis.com/auth/spreadsheets',
-        callback: ()=>{},
-      });
-    }
-    tokenClient.callback = (resp)=>{
-      if(resp.error){ reject(new Error(resp.error)); return; }
-      googleToken = { access_token: resp.access_token, expiresAt: Date.now() + (resp.expires_in*1000 - 60000) };
-      resolve(googleToken.access_token);
-    };
-    tokenClient.requestAccessToken({ prompt: '' });
-  });
-}
-
-async function crearHojaCalculo(){
-  const token = await ensureToken();
-  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
-    method:'POST',
-    headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
-    body: JSON.stringify({
-      properties:{ title:'Control de Inventario' },
-      sheets:[
-        { properties:{ title:'Inventario' } },
-        { properties:{ title:'Movimientos' } }
-      ]
-    })
-  });
-  if(!res.ok) throw new Error('No se pudo crear la hoja ('+res.status+')');
-  const data = await res.json();
-  const sheetId = data.spreadsheetId;
-  await appendRow(sheetId, 'Inventario', ['SKU','Nombre','Stock','Última actualización']);
-  await appendRow(sheetId, 'Movimientos', ['Fecha','Tipo','SKU','Nombre','Cantidad','Anterior','Nuevo','Operador']);
-  return sheetId;
-}
-
-async function appendRow(spreadsheetId, sheetName, row){
-  const token = await ensureToken();
-  const range = encodeURIComponent(sheetName + '!A:Z');
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`, {
-    method:'POST',
-    headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
-    body: JSON.stringify({ values:[row] })
-  });
-  if(!res.ok) throw new Error('Error al escribir en Sheets ('+res.status+')');
-  return res.json();
-}
-
-async function upsertInventoryRow(item){
-  if(!googleToken || !googleCfg.spreadsheetId) return;
-  try{
-    const token = await ensureToken();
-    const getRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${googleCfg.spreadsheetId}/values/Inventario!A:A`, {
-      headers:{ 'Authorization':'Bearer '+token }
-    });
-    const data = await getRes.json();
-    const col = data.values || [];
-    let rowIndex = -1;
-    for(let i=0;i<col.length;i++){ if(col[i][0] === item.sku){ rowIndex = i+1; break; } }
-    const rowValues = [item.sku, item.nombre, item.stock, new Date().toLocaleString('es-ES')];
-    if(rowIndex > 0){
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${googleCfg.spreadsheetId}/values/Inventario!A${rowIndex}:D${rowIndex}?valueInputOption=USER_ENTERED`, {
-        method:'PUT',
-        headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
-        body: JSON.stringify({ values:[rowValues] })
-      });
-    } else {
-      await appendRow(googleCfg.spreadsheetId, 'Inventario', rowValues);
-    }
-  }catch(e){ /* fallo silencioso: no interrumpe la operación local */ }
-}
-
-async function syncMovimiento(entry){
-  if(!googleToken || !googleCfg.spreadsheetId) return;
-  try{
-    await appendRow(googleCfg.spreadsheetId, 'Movimientos', [
-      new Date(entry.fecha).toLocaleString('es-ES'), entry.tipo, entry.sku, entry.nombre||'',
-      entry.cantidad, entry.anterior, entry.nuevo, state.auth ? state.auth.nombre : ''
-    ]);
-  }catch(e){ /* fallo silencioso */ }
-}
-
-async function sincronizarTodoElInventario(){
-  const toast = document.getElementById('syncToast');
-  try{
-    const list = await window.storage.list('item:', true);
-    if(list && list.keys){
-      for(const k of list.keys){
-        const res = await window.storage.get(k, true);
-        if(res){ const item = JSON.parse(res.value); await upsertInventoryRow(item); }
-      }
-    }
-    if(toast){ toast.style.display='block'; setTimeout(()=>toast.style.display='none', 2500); }
-  }catch(e){ /* ignorar */ }
-}
-
-(async function init(){
-  await loadGoogleConfig();
-  await seedOperadoresPredefinidos();
-  render();
-})();
+render();
 window.addEventListener('beforeunload', stopCamera);
 </script>
 </body>
