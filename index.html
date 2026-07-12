@@ -990,6 +990,21 @@ async function saveOperador(op){
   try{ await window.storage.set('operador:'+op.usuario, JSON.stringify(op), true); }catch(e){}
 }
 
+const DEFAULT_OPERADORES = [
+  { usuario:'cuadrante1', nombre:'Cuadrante1', pin:'1201' },
+  { usuario:'cuadrante2', nombre:'Cuadrante2', pin:'2202' },
+  { usuario:'cuadrante3', nombre:'Cuadrante3', pin:'3303' },
+  { usuario:'cuadrante4', nombre:'Cuadrante4', pin:'4404' },
+];
+async function seedOperadoresPredefinidos(){
+  for(const op of DEFAULT_OPERADORES){
+    try{
+      const existing = await loadOperador(op.usuario);
+      if(!existing) await saveOperador(op);
+    }catch(e){ /* ignorar y continuar con el siguiente */ }
+  }
+}
+
 async function handleLogin(){
   const err = document.getElementById('loginError');
   err.style.display = 'none';
@@ -1023,7 +1038,7 @@ async function handleRegistro(){
 }
 
 /* ---------------- GOOGLE SHEETS SYNC ---------------- */
-let googleCfg = { clientId:'891052272055-46rs4lp7lcbj9hlf5af5qeuf17q9v6kr.apps.googleusercontent.com', spreadsheetId:'' };
+let googleCfg = { clientId:'891052272055-46rs4lp7lcbj9hlf5af5qeuf17q9v6kr.apps.googleusercontent.com', spreadsheetId:'1mxrlxbw5db2LwU1WiJZrzTQvmoN3pVac3dSRHq3Hn7Q' };
 let googleToken = null;      // { access_token, expiresAt }
 let tokenClient = null;
 let googleReadyPromise = null;
@@ -1031,8 +1046,12 @@ let googleReadyPromise = null;
 async function loadGoogleConfig(){
   try{
     const res = await window.storage.get('config:google', true);
-    if(res) googleCfg = JSON.parse(res.value);
-  }catch(e){ /* no config yet */ }
+    if(res){
+      const stored = JSON.parse(res.value);
+      if(stored.clientId) googleCfg.clientId = stored.clientId;
+      if(stored.spreadsheetId) googleCfg.spreadsheetId = stored.spreadsheetId;
+    }
+  }catch(e){ /* no config yet, se usan los valores por defecto */ }
 }
 async function saveGoogleConfig(){
   try{ await window.storage.set('config:google', JSON.stringify(googleCfg), true); }catch(e){}
@@ -1284,6 +1303,7 @@ async function sincronizarTodoElInventario(){
 
 (async function init(){
   await loadGoogleConfig();
+  await seedOperadoresPredefinidos();
   render();
 })();
 window.addEventListener('beforeunload', stopCamera);
