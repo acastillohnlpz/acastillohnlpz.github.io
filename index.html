@@ -336,7 +336,7 @@
 </head>
 <body>
 <div class="app">
-  <div class="brand"><span class="mark">SKU•SCAN</span><h1>Control de Inventario</h1><div id="operadorPill"></div><button id="btnGear" class="gear-btn" title="Configuración" style="display:none;">⚙</button></div>
+  <div class="brand"><span class="mark">SKU•SCAN</span><h1>Control de Inventario</h1><div id="operadorPill"></div></div>
   <div class="stepper" id="stepper"></div>
   <div class="card" id="stepContainer"></div>
 </div>
@@ -425,15 +425,12 @@ function stopCamera(){
 function renderStepper(){
   const el = document.getElementById('stepper');
   const pill = document.getElementById('operadorPill');
-  const gear = document.getElementById('btnGear');
   if(state.screen === 'login' || state.screen === 'registro'){
     el.style.display = 'none';
     pill.innerHTML = '';
-    gear.style.display = 'none';
     return;
   }
   pill.innerHTML = state.auth ? `<div class="operador-pill"><span class="op-name">${state.auth.nombre}</span><button id="btnLogout" title="Cerrar sesión">⏻</button></div>` : '';
-  gear.style.display = state.auth ? 'flex' : 'none';
   if(state.screen === 'crear' || state.screen === 'config' || state.screen === 'listado' || state.screen === 'admin'){ el.style.display = 'none'; return; }
   el.style.display = 'flex';
   el.innerHTML = '';
@@ -520,7 +517,6 @@ function renderLogin(){
         <div id="loginError" class="error-msg" style="display:none;"></div>
         <button class="btn btn-primary" id="btnLogin">Ingresar</button>
         <button class="link-toggle" id="btnGoRegistro">¿Nuevo operador? Regístrate aquí</button>
-        <button class="link-toggle" id="btnGoConfigLogin">⚙ Configurar conexión con la hoja</button>
       </div>
     </div>
   `;
@@ -862,6 +858,7 @@ function renderAdminMenu(){
     <button class="btn-crear" id="btnAdminEditar"><span class="plus">✎</span> Editar datos de un artículo</button>
     <button class="btn-crear" id="btnAdminEliminar"><span class="plus">🗑</span> Eliminar un artículo</button>
     <button class="btn-crear" id="btnAdminOperadores"><span class="plus">👤</span> Gestionar operadores</button>
+    <button class="btn-crear" id="btnAdminConfig"><span class="plus">⚙</span> Configurar conexión con la hoja</button>
     <button class="btn btn-ghost" style="margin-top:14px;" id="btnAdminSalir">← Volver al inicio</button>
   `;
 }
@@ -1191,9 +1188,6 @@ function bindEvents(){
   const goLogin = document.getElementById('btnGoLogin');
   if(goLogin) goLogin.onclick = ()=>{ state.screen='login'; render(); };
 
-  const goConfigLogin = document.getElementById('btnGoConfigLogin');
-  if(goConfigLogin) goConfigLogin.onclick = ()=>{ state.screen='config'; render(); };
-
   const btnLogin = document.getElementById('btnLogin');
   if(btnLogin) btnLogin.onclick = handleLogin;
 
@@ -1225,11 +1219,11 @@ function bindEvents(){
     w.print();
   };
 
-  const btnGear = document.getElementById('btnGear');
-  if(btnGear) btnGear.onclick = ()=>{ state.screen='config'; render(); };
+  const btnAdminConfig = document.getElementById('btnAdminConfig');
+  if(btnAdminConfig) btnAdminConfig.onclick = ()=>{ state.screen='config'; render(); };
 
   const btnConfigVolver = document.getElementById('btnConfigVolver');
-  if(btnConfigVolver) btnConfigVolver.onclick = ()=>{ state.screen = state.auth ? 'main' : 'login'; render(); };
+  if(btnConfigVolver) btnConfigVolver.onclick = ()=>{ state.screen = 'admin'; state.adminStep = 'menu'; render(); };
 
   const btnGuardarApiUrl = document.getElementById('btnGuardarApiUrl');
   if(btnGuardarApiUrl) btnGuardarApiUrl.onclick = ()=>{
