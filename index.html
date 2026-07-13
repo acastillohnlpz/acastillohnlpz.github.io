@@ -216,6 +216,7 @@
   .tag.salida{ background:var(--danger-soft); color:var(--danger); }
   .tag.inventario{ background:var(--steel-soft); color:var(--steel); }
   .tag.alta{ background:var(--steel-soft); color:var(--steel); }
+  .tag.edicion{ background:#F1EAFB; color:#6B4FA0; }
   .h-item .h-fecha{ color:var(--ink-soft); font-family:'IBM Plex Mono', monospace; font-size:10.5px; }
 
   .error-msg{ color:var(--danger); font-size:12.5px; margin:-6px 0 12px; }
@@ -318,6 +319,19 @@
   .lr-side{ text-align:right; }
   .lr-stock{ font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:19px; }
   .lr-fecha{ font-family:'IBM Plex Mono', monospace; font-size:10.5px; color:var(--ink-soft); margin-top:2px; }
+
+  .operador-row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 4px; border-top:1px solid #EEECE4;
+  }
+  .operador-row:first-child{ border-top:none; }
+  .operador-row .or-nombre{ font-weight:600; font-size:14px; }
+  .operador-row .or-usuario{ font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-soft); margin-top:2px; }
+  .operador-row .btn-eliminar-op{
+    border:1.5px solid var(--line); background:transparent; border-radius:8px;
+    padding:6px 10px; font-size:11px; color:var(--danger); cursor:pointer;
+  }
+  .operador-row .btn-eliminar-op:hover{ border-color:var(--danger); background:var(--danger-soft); }
 </style>
 </head>
 <body>
@@ -330,15 +344,16 @@
 <script>
 const STEP_LABELS = ["Tipo","Escanear","Datos","Resumen"];
 const CODIGO_REGISTRO = "ALMACEN-2024"; // debe coincidir con el del Apps Script
+const CLAVE_ADMIN = "11072017"; // clave para cambiar la config de conexión y editar artículos
 
 // URL del Web App de Apps Script (única para todo el equipo). Si queda vacía,
 // cada quien puede pegarla en ⚙ Configuración y se guarda solo en su navegador.
-const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbyNGLXcaMQqZn0qZ2sVx4RkHDQkRh6I38n23WBGDD6yRuUgrfBuhBPvGMG1AszWL1J0/exec";
+const DEFAULT_API_URL = "https://script.google.com/macros/s/AKfycbyC2g6_J-p9FqYtOgztcZMBFOexlC8Ql_mO98drh2HYlv0XmaL-PqhCFvak_yO5cqAG/exec";
 let API_URL = DEFAULT_API_URL;
 try{ const saved = localStorage.getItem('apiUrl'); if(saved) API_URL = saved; }catch(e){}
 
 let state = {
-  screen: 'login',       // login | registro | main | crear | config | listado
+  screen: 'login',       // login | registro | main | crear | config | listado | editar
   auth: null,            // {usuario, nombre}
   step: 1,
   tipo: null,            // entrada | salida | inventario | consulta
@@ -346,7 +361,11 @@ let state = {
   item: null,            // {sku, nombre, stock}
   isNew: false,
   lastResult: null,
-  crearItem: null
+  crearItem: null,
+  editarStep: 'auth',    // legacy, no usado
+  editarItem: null,
+  adminStep: 'auth',     // auth | menu | editarBuscar | editarForm | eliminarBuscar | eliminarConfirm | operadores
+  adminUnlocked: false
 };
 let stream = null, scanning = false, rafId = null;
 
@@ -379,6 +398,12 @@ async function apiMovimiento(entry){
     operador: state.auth ? state.auth.nombre : ''
   });
 }
+async function apiEliminarItem(sku){ return apiGet({ action:'eliminarItem', sku }); }
+async function apiGetOperadores(){ const r = await apiGet({ action:'operadores' }); return r.operadores || []; }
+async function apiEliminarOperador(usuario){ return apiGet({ action:'eliminarOperador', usuario }); }
+async function apiAgregarOperadorAdmin(nombre, usuario, pin){
+  return apiGet({ action:'registrar', nombre, usuario, pin, codigo: CODIGO_REGISTRO });
+}
 
 async function cargarItemConHistorial(sku){
   const [item, historial] = await Promise.all([apiGetItem(sku), apiGetHistorial(sku)]);
@@ -409,7 +434,7 @@ function renderStepper(){
   }
   pill.innerHTML = state.auth ? `<div class="operador-pill"><span class="op-name">${state.auth.nombre}</span><button id="btnLogout" title="Cerrar sesión">⏻</button></div>` : '';
   gear.style.display = state.auth ? 'flex' : 'none';
-  if(state.screen === 'crear' || state.screen === 'config' || state.screen === 'listado'){ el.style.display = 'none'; return; }
+  if(state.screen === 'crear' || state.screen === 'config' || state.screen === 'listado' || state.screen === 'admin'){ el.style.display = 'none'; return; }
   el.style.display = 'flex';
   el.innerHTML = '';
   for(let i=1;i<=4;i++){
@@ -430,7 +455,7 @@ function goTo(step){ state.step = step; render(); }
 function resetFlow(){
   stopCamera();
   const auth = state.auth;
-  state = { screen:'main', auth, step:1, tipo:null, sku:null, item:null, isNew:false, lastResult:null, crearItem:null };
+  state = { screen:'main', auth, step:1, tipo:null, sku:null, item:null, isNew:false, lastResult:null, crearItem:null, editarStep:'auth', editarItem:null, adminStep:'auth', adminUnlocked:false };
   render();
 }
 
@@ -456,6 +481,17 @@ function render(){
   }
   if(state.screen === 'listado'){
     c.innerHTML = renderListadoShell(); bindEvents(); refreshListado('');
+    return;
+  }
+  if(state.screen === 'admin'){
+    if(state.adminStep === 'auth') c.innerHTML = renderAdminAuth();
+    else if(state.adminStep === 'menu') c.innerHTML = renderAdminMenu();
+    else if(state.adminStep === 'editarBuscar') c.innerHTML = renderEditarBuscar();
+    else if(state.adminStep === 'editarForm') c.innerHTML = renderEditarForm();
+    else if(state.adminStep === 'eliminarBuscar') c.innerHTML = renderAdminEliminarBuscar();
+    else if(state.adminStep === 'eliminarConfirm') c.innerHTML = renderAdminEliminarConfirm();
+    else if(state.adminStep === 'operadores') { c.innerHTML = renderAdminOperadores(); bindEvents(); refreshOperadoresLista(); return; }
+    bindEvents();
     return;
   }
   if(state.step===1) c.innerHTML = renderStep1();
@@ -542,6 +578,7 @@ function renderStep1(){
     </div>
     <button class="btn-crear" id="btnGoCrear"><span class="plus">+</span> Crear código para un artículo nuevo</button>
     <button class="btn-crear" id="btnGoListado"><span class="plus">☰</span> Ver listado de artículos y saldos</button>
+    <button class="btn-crear" id="btnGoAdmin"><span class="plus">🛡</span> Panel de administrador</button>
   `;
 }
 
@@ -691,7 +728,7 @@ function renderStep4(){
         <div class="h-title">Últimos movimientos</div>
         ${hist.length ? hist.map(h=>`
           <div class="h-item">
-            <span><span class="tag ${h.tipo}">${h.tipo}</span>${h.operador ? 'reg. '+h.operador : ''}</span>
+            <span><span class="tag ${h.tipo}">${h.tipo}</span>Cant. ${h.cantidad}${h.operador ? ' · '+h.operador : ''}</span>
             <span class="h-fecha">${fmtDate(h.fecha)}</span>
           </div>`).join('') : '<div class="h-item">Sin movimientos registrados.</div>'}
       </div>
@@ -779,6 +816,139 @@ async function refreshListado(filtro){
   }
 }
 
+async function refreshOperadoresLista(){
+  const holder = document.getElementById('operadoresLista');
+  if(!holder) return;
+  try{
+    const ops = await apiGetOperadores();
+    if(!ops.length){ holder.innerHTML = '<div class="helper">No hay operadores registrados.</div>'; return; }
+    holder.innerHTML = ops.map(op => `
+      <div class="operador-row" data-usuario="${op.usuario}">
+        <div><div class="or-nombre">${op.nombre}</div><div class="or-usuario">${op.usuario}</div></div>
+        <button class="btn-eliminar-op" data-usuario="${op.usuario}">Eliminar</button>
+      </div>`).join('');
+    holder.querySelectorAll('.btn-eliminar-op').forEach(btn=>{
+      btn.onclick = async ()=>{
+        if(!confirm('¿Eliminar al operador "' + btn.dataset.usuario + '"?')) return;
+        btn.disabled = true; btn.textContent = '...';
+        try{ await apiEliminarOperador(btn.dataset.usuario); await refreshOperadoresLista(); }
+        catch(e){ alert('No se pudo eliminar: ' + e.message); btn.disabled = false; btn.textContent = 'Eliminar'; }
+      };
+    });
+  }catch(e){
+    holder.innerHTML = `<div class="helper">No se pudo cargar operadores: ${e.message}</div>`;
+  }
+}
+
+function renderAdminAuth(){
+  return `
+    <p class="eyebrow">Acceso restringido</p>
+    <h2 class="step-title">Panel de administrador</h2>
+    <div class="helper">Se requiere la clave de autorización para continuar.</div>
+    <div class="field">
+      <label for="eClave">Clave</label>
+      <input id="eClave" type="password" placeholder="••••••••" inputmode="numeric" autocomplete="off">
+    </div>
+    <div id="editarAuthError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnEditarAuth">Continuar</button>
+    <button class="btn btn-ghost" id="btnEditarVolver">← Volver</button>
+  `;
+}
+
+function renderAdminMenu(){
+  return `
+    <p class="eyebrow">Panel de administrador</p>
+    <h2 class="step-title">¿Qué deseas hacer?</h2>
+    <button class="btn-crear" id="btnAdminEditar"><span class="plus">✎</span> Editar datos de un artículo</button>
+    <button class="btn-crear" id="btnAdminEliminar"><span class="plus">🗑</span> Eliminar un artículo</button>
+    <button class="btn-crear" id="btnAdminOperadores"><span class="plus">👤</span> Gestionar operadores</button>
+    <button class="btn btn-ghost" style="margin-top:14px;" id="btnAdminSalir">← Volver al inicio</button>
+  `;
+}
+
+function renderEditarBuscar(){
+  return `
+    <p class="eyebrow">Editar artículo</p>
+    <h2 class="step-title">¿Cuál artículo vas a editar?</h2>
+    <div class="field">
+      <label for="eSku">Código (SKU)</label>
+      <input id="eSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
+    </div>
+    <div id="editarBuscarError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnEditarBuscar">Buscar artículo</button>
+    <button class="btn btn-ghost" id="btnAdminMenuVolver">← Volver</button>
+  `;
+}
+
+function renderEditarForm(){
+  const item = state.editarItem;
+  return `
+    <p class="eyebrow">Editar artículo</p>
+    <h2 class="step-title">Actualizar datos</h2>
+    <div class="item-chip">
+      <div><div class="sku">${item.sku}</div><div class="nombre">SKU (no editable)</div></div>
+    </div>
+    <div class="field">
+      <label for="eNombre">Nombre del artículo</label>
+      <input id="eNombre" type="text" value="${item.nombre||''}" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="eStock">Stock</label>
+      <input id="eStock" type="number" min="0" step="1" value="${item.stock}" inputmode="numeric">
+    </div>
+    <div id="editarFormError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnEditarGuardar">Guardar cambios</button>
+    <button class="btn btn-ghost" id="btnAdminMenuVolver">← Volver al menú</button>
+  `;
+}
+
+function renderAdminEliminarBuscar(){
+  return `
+    <p class="eyebrow">Eliminar artículo</p>
+    <h2 class="step-title">¿Cuál artículo vas a eliminar?</h2>
+    <div class="field">
+      <label for="dSku">Código (SKU)</label>
+      <input id="dSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
+    </div>
+    <div id="eliminarBuscarError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnEliminarBuscar">Buscar artículo</button>
+    <button class="btn btn-ghost" id="btnAdminMenuVolver">← Volver</button>
+  `;
+}
+
+function renderAdminEliminarConfirm(){
+  const item = state.editarItem;
+  return `
+    <p class="eyebrow">Confirmar eliminación</p>
+    <h2 class="step-title">¿Eliminar este artículo?</h2>
+    <div class="item-chip">
+      <div><div class="sku">${item.sku}</div><div class="nombre">${item.nombre||'(sin nombre)'}</div></div>
+      <div class="stock"><div class="n">${item.stock}</div><div class="u">EN STOCK</div></div>
+    </div>
+    <div class="banner-danger">Esta acción borra el artículo del inventario. El historial de movimientos no se borra.</div>
+    <div id="eliminarConfirmError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnEliminarConfirmar" style="background:var(--danger);">Sí, eliminar artículo</button>
+    <button class="btn btn-ghost" id="btnAdminMenuVolver">← Cancelar</button>
+  `;
+}
+
+function renderAdminOperadores(){
+  return `
+    <p class="eyebrow">Operadores</p>
+    <h2 class="step-title">Gestionar operadores</h2>
+    <div id="operadoresLista"><div class="helper">Cargando…</div></div>
+    <div class="config-section">
+      <h4>Agregar operador</h4>
+      <div class="field"><label for="oNombre">Nombre</label><input id="oNombre" type="text" placeholder="Ej. Cuadrante5" autocomplete="off"></div>
+      <div class="field"><label for="oUsuario">Usuario</label><input id="oUsuario" type="text" placeholder="Ej. cuadrante5" autocomplete="off"></div>
+      <div class="field"><label for="oPin">PIN</label><input id="oPin" type="password" inputmode="numeric" placeholder="••••" autocomplete="off"></div>
+      <div id="operadoresError" class="error-msg" style="display:none;"></div>
+      <button class="btn btn-primary" id="btnOperadorAgregar">Agregar operador</button>
+    </div>
+    <button class="btn btn-ghost" id="btnAdminMenuVolver" style="margin-top:14px;">← Volver al menú</button>
+  `;
+}
+
 function renderConfig(){
   return `
     <p class="eyebrow">Configuración</p>
@@ -806,6 +976,11 @@ function renderConfig(){
         <label for="cfgApiUrl">Termina en /exec</label>
         <input id="cfgApiUrl" type="text" placeholder="https://script.google.com/macros/s/AKfycb.../exec" value="${API_URL||''}" autocomplete="off">
       </div>
+      <div class="field">
+        <label for="cfgClave">Clave para guardar cambios</label>
+        <input id="cfgClave" type="password" placeholder="••••••••" inputmode="numeric" autocomplete="off">
+      </div>
+      <div id="cfgClaveError" class="error-msg" style="display:none;"></div>
       <div class="btn-row">
         <button class="btn btn-ghost" id="btnGuardarApiUrl">Guardar</button>
         <button class="btn btn-primary" id="btnProbarConexion">Probar conexión</button>
@@ -863,6 +1038,130 @@ function bindEvents(){
 
   const btnListadoVolver = document.getElementById('btnListadoVolver');
   if(btnListadoVolver) btnListadoVolver.onclick = ()=>{ state.screen='main'; state.step=1; render(); };
+
+  const goAdmin = document.getElementById('btnGoAdmin');
+  if(goAdmin) goAdmin.onclick = ()=>{
+    state.screen='admin';
+    state.adminStep = state.adminUnlocked ? 'menu' : 'auth';
+    render();
+  };
+
+  const btnEditarAuth = document.getElementById('btnEditarAuth');
+  if(btnEditarAuth) btnEditarAuth.onclick = ()=>{
+    const err = document.getElementById('editarAuthError');
+    const val = document.getElementById('eClave').value.trim();
+    if(val !== CLAVE_ADMIN){ err.textContent = 'Clave incorrecta.'; err.style.display='block'; return; }
+    state.adminUnlocked = true;
+    state.adminStep = 'menu';
+    render();
+  };
+
+  const btnEditarVolver = document.getElementById('btnEditarVolver');
+  if(btnEditarVolver) btnEditarVolver.onclick = ()=>{ state.screen='main'; state.step=1; render(); };
+
+  const btnAdminSalir = document.getElementById('btnAdminSalir');
+  if(btnAdminSalir) btnAdminSalir.onclick = ()=>{ state.screen='main'; state.step=1; render(); };
+
+  const btnAdminMenuVolver = document.getElementById('btnAdminMenuVolver');
+  if(btnAdminMenuVolver) btnAdminMenuVolver.onclick = ()=>{ state.adminStep='menu'; render(); };
+
+  const btnAdminEditar = document.getElementById('btnAdminEditar');
+  if(btnAdminEditar) btnAdminEditar.onclick = ()=>{ state.adminStep='editarBuscar'; render(); };
+
+  const btnAdminEliminar = document.getElementById('btnAdminEliminar');
+  if(btnAdminEliminar) btnAdminEliminar.onclick = ()=>{ state.adminStep='eliminarBuscar'; render(); };
+
+  const btnAdminOperadores = document.getElementById('btnAdminOperadores');
+  if(btnAdminOperadores) btnAdminOperadores.onclick = ()=>{ state.adminStep='operadores'; render(); };
+
+  const btnEditarBuscar = document.getElementById('btnEditarBuscar');
+  if(btnEditarBuscar) btnEditarBuscar.onclick = async ()=>{
+    const err = document.getElementById('editarBuscarError');
+    err.style.display = 'none';
+    const sku = document.getElementById('eSku').value.trim();
+    if(!sku){ err.textContent = 'Ingresa un SKU.'; err.style.display='block'; return; }
+    btnEditarBuscar.disabled = true; btnEditarBuscar.textContent = 'Buscando…';
+    try{
+      const item = await apiGetItem(sku);
+      if(!item){ err.textContent = 'No se encontró ese código.'; err.style.display='block'; }
+      else { state.editarItem = item; state.adminStep = 'editarForm'; render(); return; }
+    }catch(e){ err.textContent = e.message; err.style.display='block'; }
+    btnEditarBuscar.disabled = false; btnEditarBuscar.textContent = 'Buscar artículo';
+  };
+
+  const btnEditarGuardar = document.getElementById('btnEditarGuardar');
+  if(btnEditarGuardar) btnEditarGuardar.onclick = async ()=>{
+    const err = document.getElementById('editarFormError');
+    err.style.display = 'none';
+    const nombre = document.getElementById('eNombre').value.trim();
+    const stock = parseInt(document.getElementById('eStock').value, 10);
+    if(!nombre){ err.textContent = 'Ingresa el nombre.'; err.style.display='block'; return; }
+    if(isNaN(stock) || stock < 0){ err.textContent = 'Ingresa un stock válido.'; err.style.display='block'; return; }
+    btnEditarGuardar.disabled = true; btnEditarGuardar.textContent = 'Guardando…';
+    try{
+      const anterior = state.editarItem.stock;
+      const sku = state.editarItem.sku;
+      await apiGuardarItem({ sku, nombre, stock });
+      if(stock !== anterior || nombre !== state.editarItem.nombre){
+        await apiMovimiento({ tipo:'edicion', sku, nombre, cantidad: stock-anterior, anterior, nuevo: stock });
+      }
+      state.adminStep = 'menu';
+      render();
+    }catch(e){
+      err.textContent = e.message; err.style.display='block';
+      btnEditarGuardar.disabled = false; btnEditarGuardar.textContent = 'Guardar cambios';
+    }
+  };
+
+  const btnEliminarBuscar = document.getElementById('btnEliminarBuscar');
+  if(btnEliminarBuscar) btnEliminarBuscar.onclick = async ()=>{
+    const err = document.getElementById('eliminarBuscarError');
+    err.style.display = 'none';
+    const sku = document.getElementById('dSku').value.trim();
+    if(!sku){ err.textContent = 'Ingresa un SKU.'; err.style.display='block'; return; }
+    btnEliminarBuscar.disabled = true; btnEliminarBuscar.textContent = 'Buscando…';
+    try{
+      const item = await apiGetItem(sku);
+      if(!item){ err.textContent = 'No se encontró ese código.'; err.style.display='block'; }
+      else { state.editarItem = item; state.adminStep = 'eliminarConfirm'; render(); return; }
+    }catch(e){ err.textContent = e.message; err.style.display='block'; }
+    btnEliminarBuscar.disabled = false; btnEliminarBuscar.textContent = 'Buscar artículo';
+  };
+
+  const btnEliminarConfirmar = document.getElementById('btnEliminarConfirmar');
+  if(btnEliminarConfirmar) btnEliminarConfirmar.onclick = async ()=>{
+    const err = document.getElementById('eliminarConfirmError');
+    err.style.display = 'none';
+    btnEliminarConfirmar.disabled = true; btnEliminarConfirmar.textContent = 'Eliminando…';
+    try{
+      await apiEliminarItem(state.editarItem.sku);
+      state.adminStep = 'menu';
+      render();
+    }catch(e){
+      err.textContent = e.message; err.style.display='block';
+      btnEliminarConfirmar.disabled = false; btnEliminarConfirmar.textContent = 'Sí, eliminar artículo';
+    }
+  };
+
+  const btnOperadorAgregar = document.getElementById('btnOperadorAgregar');
+  if(btnOperadorAgregar) btnOperadorAgregar.onclick = async ()=>{
+    const err = document.getElementById('operadoresError');
+    err.style.display = 'none';
+    const nombre = document.getElementById('oNombre').value.trim();
+    const usuario = document.getElementById('oUsuario').value.trim().toLowerCase();
+    const pin = document.getElementById('oPin').value.trim();
+    if(!nombre || !usuario || !pin){ err.textContent = 'Completa todos los campos.'; err.style.display='block'; return; }
+    if(pin.length < 4){ err.textContent = 'El PIN debe tener al menos 4 dígitos.'; err.style.display='block'; return; }
+    btnOperadorAgregar.disabled = true; btnOperadorAgregar.textContent = 'Agregando…';
+    try{
+      await apiAgregarOperadorAdmin(nombre, usuario, pin);
+      document.getElementById('oNombre').value = '';
+      document.getElementById('oUsuario').value = '';
+      document.getElementById('oPin').value = '';
+      await refreshOperadoresLista();
+    }catch(e){ err.textContent = e.message; err.style.display='block'; }
+    btnOperadorAgregar.disabled = false; btnOperadorAgregar.textContent = 'Agregar operador';
+  };
 
   const autoSku = document.getElementById('btnAutoSku');
   if(autoSku) autoSku.onclick = ()=>{ document.getElementById('cSku').value = genSku(); };
@@ -934,6 +1233,10 @@ function bindEvents(){
 
   const btnGuardarApiUrl = document.getElementById('btnGuardarApiUrl');
   if(btnGuardarApiUrl) btnGuardarApiUrl.onclick = ()=>{
+    const err = document.getElementById('cfgClaveError');
+    err.style.display = 'none';
+    const clave = document.getElementById('cfgClave').value.trim();
+    if(clave !== CLAVE_ADMIN){ err.textContent = 'Clave incorrecta. No se guardaron los cambios.'; err.style.display='block'; return; }
     const val = document.getElementById('cfgApiUrl').value.trim();
     API_URL = val;
     try{ localStorage.setItem('apiUrl', val); }catch(e){}
