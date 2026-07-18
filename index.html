@@ -1417,27 +1417,43 @@ async function initScanner(){
   const statusEl = document.getElementById('scanStatus');
   const laser = document.getElementById('laser');
   if(!video) return;
+
+  if(!window.jsQR){
+    statusEl.textContent = 'No se pudo cargar el lector de QR. Revisa tu conexión y vuelve a intentar.';
+    return;
+  }
+
   try{
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 720 }, height: { ideal: 720 } }
+    });
     video.srcObject = stream;
     await video.play();
     statusEl.textContent = 'Buscando código QR…';
     laser.style.display = 'block';
     scanning = true;
+    const MAX_DIM = 420; // analizar en baja resolución = mucho más rápido en celulares
     const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const tick = ()=>{
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    let lastTry = 0;
+    const tick = (ts)=>{
       if(!scanning) return;
       if(video.readyState === video.HAVE_ENOUGH_DATA){
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = window.jsQR ? jsQR(imageData.data, imageData.width, imageData.height) : null;
-        if(code && code.data){
-          statusEl.textContent = 'Código detectado ✓';
-          handleScanned(code.data.trim());
-          return;
+        // limitar a ~8 análisis por segundo: de sobra para detectar y evita saturar el celular
+        if(!lastTry || ts - lastTry > 120){
+          lastTry = ts;
+          const vw = video.videoWidth, vh = video.videoHeight;
+          const scale = Math.min(1, MAX_DIM / Math.max(vw, vh));
+          canvas.width = Math.max(1, Math.floor(vw * scale));
+          canvas.height = Math.max(1, Math.floor(vh * scale));
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+          if(code && code.data){
+            statusEl.textContent = 'Código detectado ✓';
+            handleScanned(code.data.trim());
+            return;
+          }
         }
       }
       rafId = requestAnimationFrame(tick);
