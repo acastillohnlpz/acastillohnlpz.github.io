@@ -6,7 +6,6 @@
 <title>Control de Inventario</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   :root{
@@ -369,6 +368,38 @@ let state = {
 };
 let stream = null, scanning = false, rafId = null;
 
+/* ---------------- Carga de jsQR con varios servidores de respaldo ---------------- */
+const JSQR_SOURCES = [
+  'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js',
+  'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'
+];
+let jsQRLoadPromise = null;
+function loadScriptTag(src){
+  return new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = ()=>resolve();
+    s.onerror = ()=>reject(new Error('no cargó ' + src));
+    document.head.appendChild(s);
+  });
+}
+function ensureJsQR(){
+  if(window.jsQR) return Promise.resolve();
+  if(jsQRLoadPromise) return jsQRLoadPromise;
+  jsQRLoadPromise = (async ()=>{
+    for(const src of JSQR_SOURCES){
+      try{
+        await loadScriptTag(src);
+        if(window.jsQR) return;
+      }catch(e){ /* intenta el siguiente servidor */ }
+    }
+    throw new Error('No se pudo cargar el lector de QR desde ningún servidor. Revisa tu conexión a internet.');
+  })();
+  return jsQRLoadPromise;
+}
+ensureJsQR().catch(()=>{}); // intenta precargarlo desde ya, en segundo plano
+
 /* ---------------- API (Google Apps Script) ---------------- */
 async function apiGet(params){
   if(!API_URL) throw new Error('Falta configurar la URL del Web App (⚙ Configuración).');
@@ -589,7 +620,7 @@ function renderCrearForm(){
     <div class="field">
       <label for="cSku">Código (SKU)</label>
       <div class="sku-row">
-        <input id="cSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
+        <input id="cSku" type="text" placeholder="Ej. STACK-001" autocomplete="off">
         <button class="btn-mini" id="btnAutoSku" type="button">Autogenerar</button>
       </div>
       <div class="helper">Déjalo vacío y presiona "Autogenerar" si no tienes uno.</div>
@@ -869,7 +900,7 @@ function renderEditarBuscar(){
     <h2 class="step-title">¿Cuál artículo vas a editar?</h2>
     <div class="field">
       <label for="eSku">Código (SKU)</label>
-      <input id="eSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
+      <input id="eSku" type="text" placeholder="Ej. STACK-001" autocomplete="off">
     </div>
     <div id="editarBuscarError" class="error-msg" style="display:none;"></div>
     <button class="btn btn-primary" id="btnEditarBuscar">Buscar artículo</button>
@@ -905,7 +936,7 @@ function renderAdminEliminarBuscar(){
     <h2 class="step-title">¿Cuál artículo vas a eliminar?</h2>
     <div class="field">
       <label for="dSku">Código (SKU)</label>
-      <input id="dSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
+      <input id="dSku" type="text" placeholder="Ej. STACK-001" autocomplete="off">
     </div>
     <div id="eliminarBuscarError" class="error-msg" style="display:none;"></div>
     <button class="btn btn-primary" id="btnEliminarBuscar">Buscar artículo</button>
@@ -1417,27 +1448,45 @@ async function initScanner(){
   const statusEl = document.getElementById('scanStatus');
   const laser = document.getElementById('laser');
   if(!video) return;
+
+  if(!window.jsQR){
+    statusEl.textContent = 'Cargando lector de QR…';
+    try{ await ensureJsQR(); }
+    catch(e){ statusEl.textContent = e.message; return; }
+    if(document.getElementById('video') !== video) return; // la pantalla cambió mientras cargaba
+  }
+
   try{
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 720 }, height: { ideal: 720 } }
+    });
     video.srcObject = stream;
     await video.play();
     statusEl.textContent = 'Buscando código QR…';
     laser.style.display = 'block';
     scanning = true;
+    const MAX_DIM = 420; // analizar en baja resolución = mucho más rápido en celulares
     const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const tick = ()=>{
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    let lastTry = 0;
+    const tick = (ts)=>{
       if(!scanning) return;
       if(video.readyState === video.HAVE_ENOUGH_DATA){
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = window.jsQR ? jsQR(imageData.data, imageData.width, imageData.height) : null;
-        if(code && code.data){
-          statusEl.textContent = 'Código detectado ✓';
-          handleScanned(code.data.trim());
-          return;
+        // limitar a ~8 análisis por segundo: de sobra para detectar y evita saturar el celular
+        if(!lastTry || ts - lastTry > 120){
+          lastTry = ts;
+          const vw = video.videoWidth, vh = video.videoHeight;
+          const scale = Math.min(1, MAX_DIM / Math.max(vw, vh));
+          canvas.width = Math.max(1, Math.floor(vw * scale));
+          canvas.height = Math.max(1, Math.floor(vh * scale));
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+          if(code && code.data){
+            statusEl.textContent = 'Código detectado ✓';
+            handleScanned(code.data.trim());
+            return;
+          }
         }
       }
       rafId = requestAnimationFrame(tick);
