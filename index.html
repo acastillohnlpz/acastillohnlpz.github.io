@@ -6,7 +6,6 @@
 <title>Control de Inventario</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
   :root{
@@ -368,6 +367,38 @@ let state = {
   adminUnlocked: false
 };
 let stream = null, scanning = false, rafId = null;
+
+/* ---------------- Carga de jsQR con varios servidores de respaldo ---------------- */
+const JSQR_SOURCES = [
+  'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js',
+  'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'
+];
+let jsQRLoadPromise = null;
+function loadScriptTag(src){
+  return new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = ()=>resolve();
+    s.onerror = ()=>reject(new Error('no cargó ' + src));
+    document.head.appendChild(s);
+  });
+}
+function ensureJsQR(){
+  if(window.jsQR) return Promise.resolve();
+  if(jsQRLoadPromise) return jsQRLoadPromise;
+  jsQRLoadPromise = (async ()=>{
+    for(const src of JSQR_SOURCES){
+      try{
+        await loadScriptTag(src);
+        if(window.jsQR) return;
+      }catch(e){ /* intenta el siguiente servidor */ }
+    }
+    throw new Error('No se pudo cargar el lector de QR desde ningún servidor. Revisa tu conexión a internet.');
+  })();
+  return jsQRLoadPromise;
+}
+ensureJsQR().catch(()=>{}); // intenta precargarlo desde ya, en segundo plano
 
 /* ---------------- API (Google Apps Script) ---------------- */
 async function apiGet(params){
@@ -1419,8 +1450,10 @@ async function initScanner(){
   if(!video) return;
 
   if(!window.jsQR){
-    statusEl.textContent = 'No se pudo cargar el lector de QR. Revisa tu conexión y vuelve a intentar.';
-    return;
+    statusEl.textContent = 'Cargando lector de QR…';
+    try{ await ensureJsQR(); }
+    catch(e){ statusEl.textContent = e.message; return; }
+    if(document.getElementById('video') !== video) return; // la pantalla cambió mientras cargaba
   }
 
   try{
