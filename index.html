@@ -365,7 +365,11 @@ let state = {
   editarItem: null,
   adminStep: 'auth',     // auth | menu | editarBuscar | editarForm | eliminarBuscar | eliminarConfirm | operadores
   adminUnlocked: false,
-  imprimirItem: null
+  imprimirItem: null,
+  imprimirSub: 'menu',   // menu | qrBuscar | qrShow | movRango | movResultado | kardexBuscar | kardexShow
+  printQRItem: null,
+  printMovimientos: null,
+  printKardex: null
 };
 let stream = null, scanning = false, rafId = null;
 
@@ -436,6 +440,10 @@ async function apiEliminarOperador(usuario){ return apiGet({ action:'eliminarOpe
 async function apiAgregarOperadorAdmin(nombre, usuario, pin){
   return apiGet({ action:'registrar', nombre, usuario, pin, codigo: CODIGO_REGISTRO });
 }
+async function apiMovimientosRango(desde, hasta){
+  const r = await apiGet({ action:'movimientosRango', desde, hasta });
+  return r.movimientos || [];
+}
 
 async function cargarItemConHistorial(sku){
   const [item, historial] = await Promise.all([apiGetItem(sku), apiGetHistorial(sku)]);
@@ -463,7 +471,7 @@ function renderStepper(){
     return;
   }
   pill.innerHTML = state.auth ? `<div class="operador-pill"><span class="op-name">${state.auth.nombre}</span><button id="btnLogout" title="Cerrar sesión">⏻</button></div>` : '';
-  if(state.screen === 'crear' || state.screen === 'config' || state.screen === 'listado' || state.screen === 'admin'){ el.style.display = 'none'; return; }
+  if(state.screen === 'crear' || state.screen === 'config' || state.screen === 'listado' || state.screen === 'admin' || state.screen === 'imprimir'){ el.style.display = 'none'; return; }
   el.style.display = 'flex';
   el.innerHTML = '';
   for(let i=1;i<=4;i++){
@@ -484,7 +492,7 @@ function goTo(step){ state.step = step; render(); }
 function resetFlow(){
   stopCamera();
   const auth = state.auth;
-  state = { screen:'main', auth, step:1, tipo:null, sku:null, item:null, isNew:false, lastResult:null, crearItem:null, editarStep:'auth', editarItem:null, adminStep:'auth', adminUnlocked:false, imprimirItem:null };
+  state = { screen:'main', auth, step:1, tipo:null, sku:null, item:null, isNew:false, lastResult:null, crearItem:null, editarStep:'auth', editarItem:null, adminStep:'auth', adminUnlocked:false, imprimirItem:null, imprimirSub:'menu', printQRItem:null, printMovimientos:null, printKardex:null };
   render();
 }
 
@@ -522,6 +530,18 @@ function render(){
     else if(state.adminStep === 'imprimirBuscar') c.innerHTML = renderAdminImprimirBuscar();
     else if(state.adminStep === 'imprimirQR') { c.innerHTML = renderAdminImprimirQR(); bindEvents(); drawQRInto('qrCanvasHolderAdmin', state.imprimirItem); return; }
     else if(state.adminStep === 'operadores') { c.innerHTML = renderAdminOperadores(); bindEvents(); refreshOperadoresLista(); return; }
+    bindEvents();
+    return;
+  }
+  if(state.screen === 'imprimir'){
+    const s = state.imprimirSub;
+    if(s === 'menu') c.innerHTML = renderImprimirMenu();
+    else if(s === 'qrBuscar') c.innerHTML = renderImprimirQRBuscar();
+    else if(s === 'qrShow') { c.innerHTML = renderImprimirQRShow(); bindEvents(); drawQRInto('qrCanvasHolderPrint', state.printQRItem); return; }
+    else if(s === 'movRango') c.innerHTML = renderImprimirMovRango();
+    else if(s === 'movResultado') c.innerHTML = renderImprimirMovResultado();
+    else if(s === 'kardexBuscar') c.innerHTML = renderImprimirKardexBuscar();
+    else if(s === 'kardexShow') c.innerHTML = renderImprimirKardexShow();
     bindEvents();
     return;
   }
@@ -608,6 +628,7 @@ function renderStep1(){
     </div>
     <button class="btn-crear" id="btnGoCrear"><span class="plus">+</span> Crear código para un artículo nuevo</button>
     <button class="btn-crear" id="btnGoListado"><span class="plus">☰</span> Ver listado de artículos y saldos</button>
+    <button class="btn-crear" id="btnGoImprimir"><span class="plus">🖨</span> Imprimir</button>
     <button class="btn-crear" id="btnGoAdmin"><span class="plus">🛡</span> Panel de administrador</button>
   `;
 }
@@ -996,6 +1017,115 @@ function renderAdminImprimirQR(){
   `;
 }
 
+function renderImprimirMenu(){
+  return `
+    <p class="eyebrow">Imprimir</p>
+    <h2 class="step-title">¿Qué deseas imprimir?</h2>
+    <button class="btn-crear" id="btnImprMenuQR"><span class="plus">▦</span> Código QR de un artículo</button>
+    <button class="btn-crear" id="btnImprMenuMov"><span class="plus">📄</span> Movimientos por rango de fechas</button>
+    <button class="btn-crear" id="btnImprMenuKardex"><span class="plus">📒</span> Kardex de un artículo</button>
+    <button class="btn btn-ghost" style="margin-top:14px;" id="btnImprMenuVolver">← Volver al inicio</button>
+  `;
+}
+
+function renderImprimirQRBuscar(){
+  return `
+    <p class="eyebrow">Imprimir QR</p>
+    <h2 class="step-title">¿Cuál artículo vas a imprimir?</h2>
+    <div class="field">
+      <label for="pqSku">Código (SKU)</label>
+      <input id="pqSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
+    </div>
+    <div id="imprQRBuscarError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnImprQRBuscar">Buscar artículo</button>
+    <button class="btn btn-ghost" id="btnImprMenuVolver">← Volver</button>
+  `;
+}
+
+function renderImprimirQRShow(){
+  const item = state.printQRItem;
+  return `
+    <p class="eyebrow">Imprimir QR</p>
+    <h2 class="step-title">Listo para imprimir</h2>
+    <div class="qr-box">
+      <div id="qrCanvasHolderPrint"></div>
+      <div class="qr-sku">${item.sku}</div>
+      <div class="qr-nombre">${item.nombre||''}</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="btnDescargarQRPrint">Descargar PNG</button>
+      <button class="btn btn-primary" id="btnImprimirQRPrint">Imprimir</button>
+    </div>
+    <button class="btn btn-ghost" style="margin-top:8px;" id="btnImprMenuVolver">← Volver al menú</button>
+  `;
+}
+
+function renderImprimirMovRango(){
+  const hoy = new Date().toISOString().slice(0,10);
+  return `
+    <p class="eyebrow">Imprimir movimientos</p>
+    <h2 class="step-title">Elige el rango de fechas</h2>
+    <div class="field">
+      <label for="movInicio">Fecha inicio</label>
+      <input id="movInicio" type="date" value="${hoy}">
+    </div>
+    <div class="field">
+      <label for="movFin">Fecha final</label>
+      <input id="movFin" type="date" value="${hoy}">
+    </div>
+    <div id="movRangoError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnMovGenerar">Generar reporte</button>
+    <button class="btn btn-ghost" id="btnImprMenuVolver">← Volver</button>
+  `;
+}
+
+function renderImprimirMovResultado(){
+  const r = state.printMovimientos;
+  if(!r) return `<p class="helper">No hay datos.</p>`;
+  const total = r.movimientos.length;
+  return `
+    <p class="eyebrow">Imprimir movimientos</p>
+    <h2 class="step-title">Reporte listo</h2>
+    <div class="item-chip">
+      <div><div class="sku">${r.desde} → ${r.hasta}</div><div class="nombre">Rango consultado</div></div>
+      <div class="stock"><div class="n">${total}</div><div class="u">MOVIMIENTOS</div></div>
+    </div>
+    ${total ? '' : '<div class="banner-new">No se encontraron movimientos en ese rango de fechas.</div>'}
+    <button class="btn btn-primary" id="btnMovImprimir" ${total?'':'disabled'}>Imprimir reporte</button>
+    <button class="btn btn-ghost" id="btnImprMenuVolver">← Volver al menú</button>
+  `;
+}
+
+function renderImprimirKardexBuscar(){
+  return `
+    <p class="eyebrow">Imprimir kardex</p>
+    <h2 class="step-title">¿Cuál artículo?</h2>
+    <div class="field">
+      <label for="kSku">Código (SKU)</label>
+      <input id="kSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
+    </div>
+    <div id="kardexBuscarError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnKardexBuscar">Buscar artículo</button>
+    <button class="btn btn-ghost" id="btnImprMenuVolver">← Volver</button>
+  `;
+}
+
+function renderImprimirKardexShow(){
+  const k = state.printKardex;
+  if(!k) return `<p class="helper">No hay datos.</p>`;
+  return `
+    <p class="eyebrow">Imprimir kardex</p>
+    <h2 class="step-title">Kardex listo</h2>
+    <div class="item-chip">
+      <div><div class="sku">${k.item.sku}</div><div class="nombre">${k.item.nombre||'(sin nombre)'}</div></div>
+      <div class="stock"><div class="n">${k.item.stock}</div><div class="u">SALDO ACTUAL</div></div>
+    </div>
+    <div class="helper">${k.historial.length} movimiento(s) en el historial.</div>
+    <button class="btn btn-primary" id="btnKardexImprimir">Imprimir kardex</button>
+    <button class="btn btn-ghost" id="btnImprMenuVolver">← Volver al menú</button>
+  `;
+}
+
 function renderAdminOperadores(){
   return `
     <p class="eyebrow">Operadores</p>
@@ -1108,6 +1238,91 @@ function bindEvents(){
     state.screen='admin';
     state.adminStep = state.adminUnlocked ? 'menu' : 'auth';
     render();
+  };
+
+  const goImprimir = document.getElementById('btnGoImprimir');
+  if(goImprimir) goImprimir.onclick = ()=>{ state.screen='imprimir'; state.imprimirSub='menu'; render(); };
+
+  const btnImprMenuVolver = document.getElementById('btnImprMenuVolver');
+  if(btnImprMenuVolver) btnImprMenuVolver.onclick = ()=>{ state.imprimirSub='menu'; render(); };
+
+  const btnImprMenuQR = document.getElementById('btnImprMenuQR');
+  if(btnImprMenuQR) btnImprMenuQR.onclick = ()=>{ state.imprimirSub='qrBuscar'; render(); };
+
+  const btnImprMenuMov = document.getElementById('btnImprMenuMov');
+  if(btnImprMenuMov) btnImprMenuMov.onclick = ()=>{ state.imprimirSub='movRango'; render(); };
+
+  const btnImprMenuKardex = document.getElementById('btnImprMenuKardex');
+  if(btnImprMenuKardex) btnImprMenuKardex.onclick = ()=>{ state.imprimirSub='kardexBuscar'; render(); };
+
+  const btnImprQRBuscar = document.getElementById('btnImprQRBuscar');
+  if(btnImprQRBuscar) btnImprQRBuscar.onclick = async ()=>{
+    const err = document.getElementById('imprQRBuscarError');
+    err.style.display = 'none';
+    const sku = document.getElementById('pqSku').value.trim();
+    if(!sku){ err.textContent = 'Ingresa un SKU.'; err.style.display='block'; return; }
+    btnImprQRBuscar.disabled = true; btnImprQRBuscar.textContent = 'Buscando…';
+    try{
+      const item = await apiGetItem(sku);
+      if(!item){ err.textContent = 'No se encontró ese código.'; err.style.display='block'; }
+      else { state.printQRItem = item; state.imprimirSub = 'qrShow'; render(); return; }
+    }catch(e){ err.textContent = e.message; err.style.display='block'; }
+    btnImprQRBuscar.disabled = false; btnImprQRBuscar.textContent = 'Buscar artículo';
+  };
+
+  const btnDescargarQRPrint = document.getElementById('btnDescargarQRPrint');
+  if(btnDescargarQRPrint) btnDescargarQRPrint.onclick = ()=> descargarQRDesde('qrCanvasHolderPrint', state.printQRItem);
+
+  const btnImprimirQRPrint = document.getElementById('btnImprimirQRPrint');
+  if(btnImprimirQRPrint) btnImprimirQRPrint.onclick = ()=> imprimirQRDesde('qrCanvasHolderPrint', state.printQRItem);
+
+  const btnMovGenerar = document.getElementById('btnMovGenerar');
+  if(btnMovGenerar) btnMovGenerar.onclick = async ()=>{
+    const err = document.getElementById('movRangoError');
+    err.style.display = 'none';
+    const desde = document.getElementById('movInicio').value;
+    const hasta = document.getElementById('movFin').value;
+    if(!desde || !hasta){ err.textContent = 'Elige ambas fechas.'; err.style.display='block'; return; }
+    if(desde > hasta){ err.textContent = 'La fecha inicio no puede ser posterior a la fecha final.'; err.style.display='block'; return; }
+    btnMovGenerar.disabled = true; btnMovGenerar.textContent = 'Generando…';
+    try{
+      const movimientos = await apiMovimientosRango(desde, hasta);
+      state.printMovimientos = { desde, hasta, movimientos };
+      state.imprimirSub = 'movResultado';
+      render();
+      return;
+    }catch(e){ err.textContent = e.message; err.style.display='block'; }
+    btnMovGenerar.disabled = false; btnMovGenerar.textContent = 'Generar reporte';
+  };
+
+  const btnMovImprimir = document.getElementById('btnMovImprimir');
+  if(btnMovImprimir) btnMovImprimir.onclick = ()=>{
+    const r = state.printMovimientos;
+    if(r) imprimirReporteMovimientos(r.movimientos, r.desde, r.hasta);
+  };
+
+  const btnKardexBuscar = document.getElementById('btnKardexBuscar');
+  if(btnKardexBuscar) btnKardexBuscar.onclick = async ()=>{
+    const err = document.getElementById('kardexBuscarError');
+    err.style.display = 'none';
+    const sku = document.getElementById('kSku').value.trim();
+    if(!sku){ err.textContent = 'Ingresa un SKU.'; err.style.display='block'; return; }
+    btnKardexBuscar.disabled = true; btnKardexBuscar.textContent = 'Buscando…';
+    try{
+      const { item, historial, esNuevo } = await cargarItemConHistorial(sku);
+      if(esNuevo){ err.textContent = 'No se encontró ese código.'; err.style.display='block'; btnKardexBuscar.disabled = false; btnKardexBuscar.textContent = 'Buscar artículo'; return; }
+      state.printKardex = { item, historial };
+      state.imprimirSub = 'kardexShow';
+      render();
+      return;
+    }catch(e){ err.textContent = e.message; err.style.display='block'; }
+    btnKardexBuscar.disabled = false; btnKardexBuscar.textContent = 'Buscar artículo';
+  };
+
+  const btnKardexImprimir = document.getElementById('btnKardexImprimir');
+  if(btnKardexImprimir) btnKardexImprimir.onclick = ()=>{
+    const k = state.printKardex;
+    if(k) imprimirReporteKardex(k.item, k.historial);
   };
 
   const btnEditarAuth = document.getElementById('btnEditarAuth');
@@ -1369,6 +1584,79 @@ function imprimirQRDesde(holderId, item){
     <p style="font-size:16px;font-weight:600;">${item.sku}</p>
     <p style="font-size:13px;color:#555;">${item.nombre||''}</p>
     </body></html>`);
+  w.document.close();
+  w.focus();
+  w.print();
+}
+
+function imprimirReporteMovimientos(movimientos, desde, hasta){
+  const filas = movimientos.map(m => `
+    <tr>
+      <td>${fmtDate(m.fecha)}</td>
+      <td>${m.tipo}</td>
+      <td>${m.sku}</td>
+      <td>${m.nombre||''}</td>
+      <td style="text-align:right;">${m.cantidad}</td>
+      <td style="text-align:right;">${m.anterior}</td>
+      <td style="text-align:right;">${m.nuevo}</td>
+      <td>${m.operador||''}</td>
+    </tr>`).join('');
+  const w = window.open('', '_blank');
+  w.document.write(`<html><head><title>Movimientos ${desde} a ${hasta}</title>
+  <style>
+    body{ font-family:Arial, sans-serif; padding:24px; color:#14171C; }
+    h1{ font-size:18px; margin-bottom:2px; }
+    .sub{ font-size:12px; color:#666; margin-bottom:18px; }
+    table{ width:100%; border-collapse:collapse; font-size:11px; }
+    th, td{ border:1px solid #ccc; padding:5px 7px; text-align:left; }
+    th{ background:#f0f0ee; }
+  </style>
+  </head><body>
+    <h1>Reporte de movimientos</h1>
+    <div class="sub">Del ${desde} al ${hasta} · ${movimientos.length} movimiento(s) · Generado ${new Date().toLocaleString('es-ES')}</div>
+    <table>
+      <thead><tr><th>Fecha</th><th>Tipo</th><th>SKU</th><th>Artículo</th><th>Cant.</th><th>Antes</th><th>Después</th><th>Operador</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+  </body></html>`);
+  w.document.close();
+  w.focus();
+  w.print();
+}
+
+function imprimirReporteKardex(item, historial){
+  let saldo = 0;
+  const filas = historial.map(h => {
+    const entradas = (h.nuevo - h.anterior) > 0 ? (h.nuevo - h.anterior) : '';
+    const salidas = (h.nuevo - h.anterior) < 0 ? Math.abs(h.nuevo - h.anterior) : '';
+    return `
+    <tr>
+      <td>${fmtDate(h.fecha)}</td>
+      <td>${h.tipo}</td>
+      <td style="text-align:right;">${entradas}</td>
+      <td style="text-align:right;">${salidas}</td>
+      <td style="text-align:right;">${h.nuevo}</td>
+      <td>${h.operador||''}</td>
+    </tr>`;
+  }).join('');
+  const w = window.open('', '_blank');
+  w.document.write(`<html><head><title>Kardex ${item.sku}</title>
+  <style>
+    body{ font-family:Arial, sans-serif; padding:24px; color:#14171C; }
+    h1{ font-size:18px; margin-bottom:2px; }
+    .sub{ font-size:12px; color:#666; margin-bottom:18px; }
+    table{ width:100%; border-collapse:collapse; font-size:11px; }
+    th, td{ border:1px solid #ccc; padding:5px 7px; text-align:left; }
+    th{ background:#f0f0ee; }
+  </style>
+  </head><body>
+    <h1>Kardex — ${item.sku}${item.nombre ? ' · '+item.nombre : ''}</h1>
+    <div class="sub">Saldo actual: ${item.stock} · ${historial.length} movimiento(s) · Generado ${new Date().toLocaleString('es-ES')}</div>
+    <table>
+      <thead><tr><th>Fecha</th><th>Tipo</th><th>Entradas</th><th>Salidas</th><th>Saldo</th><th>Operador</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+  </body></html>`);
   w.document.close();
   w.focus();
   w.print();
