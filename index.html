@@ -364,7 +364,8 @@ let state = {
   editarStep: 'auth',    // legacy, no usado
   editarItem: null,
   adminStep: 'auth',     // auth | menu | editarBuscar | editarForm | eliminarBuscar | eliminarConfirm | operadores
-  adminUnlocked: false
+  adminUnlocked: false,
+  imprimirItem: null
 };
 let stream = null, scanning = false, rafId = null;
 
@@ -483,7 +484,7 @@ function goTo(step){ state.step = step; render(); }
 function resetFlow(){
   stopCamera();
   const auth = state.auth;
-  state = { screen:'main', auth, step:1, tipo:null, sku:null, item:null, isNew:false, lastResult:null, crearItem:null, editarStep:'auth', editarItem:null, adminStep:'auth', adminUnlocked:false };
+  state = { screen:'main', auth, step:1, tipo:null, sku:null, item:null, isNew:false, lastResult:null, crearItem:null, editarStep:'auth', editarItem:null, adminStep:'auth', adminUnlocked:false, imprimirItem:null };
   render();
 }
 
@@ -518,6 +519,8 @@ function render(){
     else if(state.adminStep === 'editarForm') c.innerHTML = renderEditarForm();
     else if(state.adminStep === 'eliminarBuscar') c.innerHTML = renderAdminEliminarBuscar();
     else if(state.adminStep === 'eliminarConfirm') c.innerHTML = renderAdminEliminarConfirm();
+    else if(state.adminStep === 'imprimirBuscar') c.innerHTML = renderAdminImprimirBuscar();
+    else if(state.adminStep === 'imprimirQR') { c.innerHTML = renderAdminImprimirQR(); bindEvents(); drawQRInto('qrCanvasHolderAdmin', state.imprimirItem); return; }
     else if(state.adminStep === 'operadores') { c.innerHTML = renderAdminOperadores(); bindEvents(); refreshOperadoresLista(); return; }
     bindEvents();
     return;
@@ -620,7 +623,7 @@ function renderCrearForm(){
     <div class="field">
       <label for="cSku">Código (SKU)</label>
       <div class="sku-row">
-        <input id="cSku" type="text" placeholder="Ej. STACK-001" autocomplete="off">
+        <input id="cSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
         <button class="btn-mini" id="btnAutoSku" type="button">Autogenerar</button>
       </div>
       <div class="helper">Déjalo vacío y presiona "Autogenerar" si no tienes uno.</div>
@@ -888,6 +891,7 @@ function renderAdminMenu(){
     <h2 class="step-title">¿Qué deseas hacer?</h2>
     <button class="btn-crear" id="btnAdminEditar"><span class="plus">✎</span> Editar datos de un artículo</button>
     <button class="btn-crear" id="btnAdminEliminar"><span class="plus">🗑</span> Eliminar un artículo</button>
+    <button class="btn-crear" id="btnAdminImprimir"><span class="plus">🖨</span> Imprimir código QR de un artículo</button>
     <button class="btn-crear" id="btnAdminOperadores"><span class="plus">👤</span> Gestionar operadores</button>
     <button class="btn-crear" id="btnAdminConfig"><span class="plus">⚙</span> Configurar conexión con la hoja</button>
     <button class="btn btn-ghost" style="margin-top:14px;" id="btnAdminSalir">← Volver al inicio</button>
@@ -900,7 +904,7 @@ function renderEditarBuscar(){
     <h2 class="step-title">¿Cuál artículo vas a editar?</h2>
     <div class="field">
       <label for="eSku">Código (SKU)</label>
-      <input id="eSku" type="text" placeholder="Ej. STACK-001" autocomplete="off">
+      <input id="eSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
     </div>
     <div id="editarBuscarError" class="error-msg" style="display:none;"></div>
     <button class="btn btn-primary" id="btnEditarBuscar">Buscar artículo</button>
@@ -936,7 +940,7 @@ function renderAdminEliminarBuscar(){
     <h2 class="step-title">¿Cuál artículo vas a eliminar?</h2>
     <div class="field">
       <label for="dSku">Código (SKU)</label>
-      <input id="dSku" type="text" placeholder="Ej. STACK-001" autocomplete="off">
+      <input id="dSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
     </div>
     <div id="eliminarBuscarError" class="error-msg" style="display:none;"></div>
     <button class="btn btn-primary" id="btnEliminarBuscar">Buscar artículo</button>
@@ -957,6 +961,38 @@ function renderAdminEliminarConfirm(){
     <div id="eliminarConfirmError" class="error-msg" style="display:none;"></div>
     <button class="btn btn-primary" id="btnEliminarConfirmar" style="background:var(--danger);">Sí, eliminar artículo</button>
     <button class="btn btn-ghost" id="btnAdminMenuVolver">← Cancelar</button>
+  `;
+}
+
+function renderAdminImprimirBuscar(){
+  return `
+    <p class="eyebrow">Imprimir código QR</p>
+    <h2 class="step-title">¿Cuál artículo vas a imprimir?</h2>
+    <div class="field">
+      <label for="pSku">Código (SKU)</label>
+      <input id="pSku" type="text" placeholder="Ej. ART-0245" autocomplete="off">
+    </div>
+    <div id="imprimirBuscarError" class="error-msg" style="display:none;"></div>
+    <button class="btn btn-primary" id="btnImprimirBuscar">Buscar artículo</button>
+    <button class="btn btn-ghost" id="btnAdminMenuVolver">← Volver</button>
+  `;
+}
+
+function renderAdminImprimirQR(){
+  const item = state.imprimirItem;
+  return `
+    <p class="eyebrow">Imprimir código QR</p>
+    <h2 class="step-title">Listo para imprimir</h2>
+    <div class="qr-box">
+      <div id="qrCanvasHolderAdmin"></div>
+      <div class="qr-sku">${item.sku}</div>
+      <div class="qr-nombre">${item.nombre||''}</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="btnDescargarQRAdmin">Descargar PNG</button>
+      <button class="btn btn-primary" id="btnImprimirQRAdmin">Imprimir</button>
+    </div>
+    <button class="btn btn-ghost" style="margin-top:8px;" id="btnAdminMenuVolver">← Volver al menú</button>
   `;
 }
 
@@ -1099,6 +1135,9 @@ function bindEvents(){
   const btnAdminEliminar = document.getElementById('btnAdminEliminar');
   if(btnAdminEliminar) btnAdminEliminar.onclick = ()=>{ state.adminStep='eliminarBuscar'; render(); };
 
+  const btnAdminImprimir = document.getElementById('btnAdminImprimir');
+  if(btnAdminImprimir) btnAdminImprimir.onclick = ()=>{ state.adminStep='imprimirBuscar'; render(); };
+
   const btnAdminOperadores = document.getElementById('btnAdminOperadores');
   if(btnAdminOperadores) btnAdminOperadores.onclick = ()=>{ state.adminStep='operadores'; render(); };
 
@@ -1154,6 +1193,21 @@ function bindEvents(){
       else { state.editarItem = item; state.adminStep = 'eliminarConfirm'; render(); return; }
     }catch(e){ err.textContent = e.message; err.style.display='block'; }
     btnEliminarBuscar.disabled = false; btnEliminarBuscar.textContent = 'Buscar artículo';
+  };
+
+  const btnImprimirBuscar = document.getElementById('btnImprimirBuscar');
+  if(btnImprimirBuscar) btnImprimirBuscar.onclick = async ()=>{
+    const err = document.getElementById('imprimirBuscarError');
+    err.style.display = 'none';
+    const sku = document.getElementById('pSku').value.trim();
+    if(!sku){ err.textContent = 'Ingresa un SKU.'; err.style.display='block'; return; }
+    btnImprimirBuscar.disabled = true; btnImprimirBuscar.textContent = 'Buscando…';
+    try{
+      const item = await apiGetItem(sku);
+      if(!item){ err.textContent = 'No se encontró ese código.'; err.style.display='block'; }
+      else { state.imprimirItem = item; state.adminStep = 'imprimirQR'; render(); return; }
+    }catch(e){ err.textContent = e.message; err.style.display='block'; }
+    btnImprimirBuscar.disabled = false; btnImprimirBuscar.textContent = 'Buscar artículo';
   };
 
   const btnEliminarConfirmar = document.getElementById('btnEliminarConfirmar');
@@ -1226,29 +1280,17 @@ function bindEvents(){
   if(btnRegistro) btnRegistro.onclick = handleRegistro;
 
   const descargarQR = document.getElementById('btnDescargarQR');
-  if(descargarQR) descargarQR.onclick = ()=>{
-    const canvas = document.querySelector('#qrCanvasHolder canvas');
-    if(!canvas) return;
-    const link = document.createElement('a');
-    link.download = state.crearItem.sku + '.png';
-    link.href = canvas.toDataURL('image/png');
-    link.click();
-  };
+  if(descargarQR) descargarQR.onclick = ()=> descargarQRDesde('qrCanvasHolder', state.crearItem);
 
   const imprimirQR = document.getElementById('btnImprimirQR');
-  if(imprimirQR) imprimirQR.onclick = ()=>{
-    const canvas = document.querySelector('#qrCanvasHolder canvas');
-    if(!canvas) return;
-    const w = window.open('', '_blank');
-    w.document.write(`<html><head><title>${state.crearItem.sku}</title></head><body style="text-align:center; font-family:sans-serif; margin-top:40px;">
-      <img src="${canvas.toDataURL('image/png')}" style="width:260px;height:260px;"/>
-      <p style="font-size:16px;font-weight:600;">${state.crearItem.sku}</p>
-      <p style="font-size:13px;color:#555;">${state.crearItem.nombre}</p>
-      </body></html>`);
-    w.document.close();
-    w.focus();
-    w.print();
-  };
+  if(imprimirQR) imprimirQR.onclick = ()=> imprimirQRDesde('qrCanvasHolder', state.crearItem);
+
+  const descargarQRAdmin = document.getElementById('btnDescargarQRAdmin');
+  if(descargarQRAdmin) descargarQRAdmin.onclick = ()=> descargarQRDesde('qrCanvasHolderAdmin', state.imprimirItem);
+
+  const imprimirQRAdmin = document.getElementById('btnImprimirQRAdmin');
+  if(imprimirQRAdmin) imprimirQRAdmin.onclick = ()=> imprimirQRDesde('qrCanvasHolderAdmin', state.imprimirItem);
+
 
   const btnAdminConfig = document.getElementById('btnAdminConfig');
   if(btnAdminConfig) btnAdminConfig.onclick = ()=>{ state.screen='config'; render(); };
@@ -1297,15 +1339,39 @@ function genSku(){
   return 'ART-' + rnd;
 }
 
-function drawQR(){
-  const holder = document.getElementById('qrCanvasHolder');
-  if(!holder || !state.crearItem) return;
+function drawQRInto(holderId, item){
+  const holder = document.getElementById(holderId);
+  if(!holder || !item) return;
   holder.innerHTML = '';
   if(window.QRCode){
-    new QRCode(holder, { text: state.crearItem.sku, width: 200, height: 200, colorDark:'#14171C', colorLight:'#ffffff' });
+    new QRCode(holder, { text: item.sku, width: 200, height: 200, colorDark:'#14171C', colorLight:'#ffffff' });
   } else {
-    holder.textContent = state.crearItem.sku;
+    holder.textContent = item.sku;
   }
+}
+function drawQR(){ drawQRInto('qrCanvasHolder', state.crearItem); }
+
+function descargarQRDesde(holderId, item){
+  const canvas = document.querySelector('#'+holderId+' canvas');
+  if(!canvas || !item) return;
+  const link = document.createElement('a');
+  link.download = item.sku + '.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+}
+
+function imprimirQRDesde(holderId, item){
+  const canvas = document.querySelector('#'+holderId+' canvas');
+  if(!canvas || !item) return;
+  const w = window.open('', '_blank');
+  w.document.write(`<html><head><title>${item.sku}</title></head><body style="text-align:center; font-family:sans-serif; margin-top:40px;">
+    <img src="${canvas.toDataURL('image/png')}" style="width:260px;height:260px;"/>
+    <p style="font-size:16px;font-weight:600;">${item.sku}</p>
+    <p style="font-size:13px;color:#555;">${item.nombre||''}</p>
+    </body></html>`);
+  w.document.close();
+  w.focus();
+  w.print();
 }
 
 async function handleCrearConfirm(){
